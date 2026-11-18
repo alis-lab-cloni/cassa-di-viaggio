@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.frankfurter.dev https://open.er-api.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cassa di viaggio</title>
+  <meta name="description" content="Le spese del viaggio in Thailandia, in baht ed euro. I dati restano sul telefono.">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Cassa">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <!-- ===== CASSA (schermata principale) ===== -->
+    <main id="view-home" class="view active" aria-label="Cassa">
+      <header class="topbar">
+        <h1>Cassa di viaggio</h1>
+        <button id="rate-chip" class="rate-chip" type="button" aria-label="Tasso di cambio"></button>
+      </header>
+
+      <section id="budget-card" class="budget-card" aria-live="polite">
+        <div class="budget-row">
+          <div id="face" class="face" aria-hidden="true">🙂</div>
+          <div class="spent">
+            <div class="label">Speso oggi</div>
+            <div id="spent-thb" class="big">฿0</div>
+            <div id="spent-eur" class="small">€0,00</div>
+          </div>
+          <div class="remaining">
+            <div id="remaining-label" class="label">Restano</div>
+            <div id="remaining-thb" class="big">–</div>
+            <div id="remaining-eur" class="small"></div>
+          </div>
+        </div>
+        <div class="bar" role="progressbar" aria-label="Budget di oggi" aria-valuemin="0" aria-valuemax="100" id="bar">
+          <div id="bar-fill" class="bar-fill"></div>
+        </div>
+        <div class="budget-foot">
+          <span id="budget-text"></span>
+          <button id="last-expense" class="last-expense" type="button" hidden></button>
+        </div>
+      </section>
+
+      <section class="entry">
+        <div class="amount-row">
+          <button id="cur-toggle" class="cur-toggle" type="button" aria-label="Cambia valuta">฿</button>
+          <div class="amount-box">
+            <output id="amount" class="amount placeholder">0</output>
+            <div id="amount-conv" class="amount-conv">&nbsp;</div>
+          </div>
+          <button id="fix-cancel" class="fix-cancel" type="button" hidden>✕ Annulla</button>
+        </div>
+
+        <div id="cats" class="cats" role="radiogroup" aria-label="Categoria"></div>
+
+        <div id="quick" class="quick" aria-label="Importi rapidi"></div>
+
+        <div class="keypad" id="keypad">
+          <button type="button" data-k="1">1</button>
+          <button type="button" data-k="2">2</button>
+          <button type="button" data-k="3">3</button>
+          <button type="button" data-k="back" class="fn" aria-label="Cancella cifra">⌫</button>
+          <button type="button" data-k="4">4</button>
+          <button type="button" data-k="5">5</button>
+          <button type="button" data-k="6">6</button>
+          <button type="button" data-k="clear" class="fn" aria-label="Azzera">C</button>
+          <button type="button" data-k="7">7</button>
+          <button type="button" data-k="8">8</button>
+          <button type="button" data-k="9">9</button>
+          <button type="button" id="done" class="done" disabled>Fatto</button>
+          <button type="button" data-k=",">,</button>
+          <button type="button" data-k="0">0</button>
+          <button type="button" data-k="00">00</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- ===== RIEPILOGO ===== -->
+    <section id="view-summary" class="view page" aria-label="Riepilogo">
+      <header class="page-head"><h2>Riepilogo</h2></header>
+      <div id="summary"></div>
+    </section>
+
+    <!-- ===== IMPOSTAZIONI ===== -->
+    <section id="view-settings" class="view page" aria-label="Impostazioni">
+      <header class="page-head"><h2>Impostazioni</h2></header>
+
+      <div class="card">
+        <h3>💰 Budget del giorno</h3>
+        <form id="budget-form" class="inline-form">
+          <input id="budget-input" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 2000" aria-label="Budget giornaliero">
+          <div class="seg" role="radiogroup" aria-label="Valuta del budget">
+            <button type="button" data-cur="THB" class="on">฿</button>
+            <button type="button" data-cur="EUR">€</button>
+          </div>
+          <button type="submit" class="btn primary">Salva</button>
+        </form>
+        <p id="budget-hint" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>💱 Cambio</h3>
+        <p id="rate-info" class="rate-info"></p>
+        <div class="row-btns">
+          <button id="rate-refresh" type="button" class="btn">Aggiorna ora</button>
+
+        </div>
+        <form id="rate-form" class="inline-form">
+          <label for="rate-input" class="inline-label">1 € =</label>
+          <input id="rate-input" type="text" inputmode="decimal" autocomplete="off" placeholder="37,50" aria-label="Baht per un euro">
+          <span class="inline-label">฿</span>
+          <button type="submit" class="btn">Correggi</button>
+        </form>
+        <p id="rate-msg" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>💾 Copia di sicurezza</h3>
+        <p class="hint">Scarica tutte le spese in un file CSV (si apre con Excel o Numbers).</p>
+        <button id="export" type="button" class="btn primary">Esporta CSV</button>
+        <p id="export-msg" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>📲 Installa sul telefono</h3>
+        <p class="install"><b>iPhone (Safari):</b><br>
+          1. Apri il link in Safari.<br>
+          2. Tocca Condividi <span aria-hidden="true">⬆️</span>.<br>
+          3. Scegli «Aggiungi alla schermata Home» e poi «Aggiungi».</p>
+        <p class="install"><b>Android (Chrome):</b><br>
+          1. Apri il link in Chrome.<br>
+          2. Tocca il menu <span aria-hidden="true">⋮</span> in alto a destra.<br>
+          3. Scegli «Installa app» (o «Aggiungi a schermata Home»).</p>
+        <p class="hint">Installala prima di iniziare a usarla: su iPhone le spese fatte in Safari e quelle nell'app installata sono separate.</p>
+        <button id="install-btn" type="button" class="btn" hidden>Installa ora</button>
+      </div>
+
+      <div class="card">
+        <h3>🔒 I tuoi dati</h3>
+        <p class="hint">Le spese restano solo su questo telefono: niente account, niente server. L'app si collega a internet solo per leggere il cambio del giorno, senza inviare i tuoi dati.</p>
+        <button id="wipe" type="button" class="btn danger">Cancella tutte le spese</button>
+      </div>
+      <p class="version" id="version"></p>
+    </section>
+
+    <!-- ===== BARRA IN BASSO ===== -->
+    <nav class="tabs" aria-label="Sezioni">
+      <button type="button" data-view="home" class="on"><span aria-hidden="true">🪙</span>Cassa</button>
+      <button type="button" data-view="summary"><span aria-hidden="true">📊</span>Riepilogo</button>
+      <button type="button" data-view="settings"><span aria-hidden="true">⚙️</span>Impostazioni</button>
+    </nav>
+  </div>
+
+  <!-- Avviso con «Annulla» -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span id="toast-text"></span>
+    <button id="toast-undo" type="button">Annulla</button>
+  </div>
+
+  <!-- Livello per le animazioni (non intercetta i tocchi) -->
+  <div id="fx" class="fx" aria-hidden="true"></div>
+
+  <!-- Modifica spesa -->
+  <div id="sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <h3 id="sheet-title">Modifica spesa</h3>
+      <p id="sheet-when" class="hint"></p>
+      <button id="edit-amount" type="button" class="edit-amount" aria-label="Correggi l'importo"></button>
+      <p class="hint">Tocca un'altra categoria per cambiarla subito.</p>
+      <div id="edit-cats" class="cats small-cats" role="radiogroup" aria-label="Categoria"></div>
+      <div class="sheet-btns">
+        <button id="edit-delete" type="button" class="btn danger">🗑️ Elimina</button>
+        <button id="edit-close" type="button" class="btn">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
