@@ -11,7 +11,7 @@
   --accent: #1f4f4a;
   --accent-ink: #ffffff;
   --accent-soft: #e4ecea;
-  --eur: #33465f;
+  --home: #33465f;
   --green: #2f7d4f;
   --yellow: #b7791f;
   --red: #b3412f;
@@ -71,26 +71,34 @@ input, select { font: inherit; color: inherit; }
   overflow: hidden;
 }
 
-/* Tappa: un tocco per cambiarla, vale per le spese successive */
+/* Tappa: un tocco per cambiarla, vale per le spese successive. Le tappe sono dell'utente (quante vuole, con
+   nomi di lunghezza qualsiasi): occupano la riga in parti uguali e, se non ci stanno, la riga scorre di lato. */
 .stages {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  display: flex;
   gap: 4px;
   flex: 0 0 auto;
   background: var(--soft);
   border-radius: 10px;
   padding: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.stages::-webkit-scrollbar { display: none; }
 .stages button {
+  flex: 1 0 auto;
+  min-width: 64px;
+  max-width: 60%;
   border: 0;
   background: none;
   border-radius: 8px;
-  padding: 6px 0;
+  padding: 6px 10px;
   min-height: 32px;
   font-size: 13px;
   font-weight: 600;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .stages button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 
@@ -181,7 +189,9 @@ input, select { font: inherit; color: inherit; }
   font-size: 22px;
   font-weight: 600;
 }
-.cur-toggle.eur { background: var(--eur); }
+.cur-toggle.home { background: var(--home); }
+/* simboli lunghi (CHF, US$, Rp): carattere più piccolo, stesso pulsante */
+.cur-toggle.long { font-size: 15px; letter-spacing: -0.02em; padding: 0 2px; }
 .amount-box { flex: 1 1 auto; text-align: right; min-width: 0; }
 .amount { display: block; font-size: 36px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .amount.placeholder { color: #c4c7c9; }
@@ -583,7 +593,7 @@ input, select { font: inherit; color: inherit; }
 @media (max-height: 700px) {
   #view-home { gap: 6px; padding-top: calc(var(--safe-top) + 6px); padding-bottom: 6px; }
   .entry { gap: 6px; }
-  .stages button { min-height: 30px; padding: 4px 0; }
+  .stages button { min-height: 30px; padding: 4px 8px; }
   .budget-card { padding: 8px 10px 6px; }
   .big { font-size: 24px; }
   .small { font-size: 13px; }
@@ -607,7 +617,7 @@ input, select { font: inherit; color: inherit; }
   .stages button { min-height: 28px; font-size: 12.5px; }
   .budget-card { padding: 6px 10px 4px; }
   .big { font-size: 22px; }
-  /* euro sulla stessa riga dei baht */
+  /* valuta di casa sulla stessa riga della valuta locale */
   .budget-row .big, .budget-row .small { display: inline-block; vertical-align: baseline; }
   .budget-row .small { margin-left: 6px; min-height: 0; }
   .stages { padding: 2px; }
@@ -779,3 +789,44 @@ body[data-view="home"] .mode-band { display: none !important; }
   .day-chip { height: 32px; font-size: 13px; }
   .mode-band { min-height: 26px; padding-top: calc(var(--safe-top) + 3px); padding-bottom: 3px; }
 }
+
+/* ===== v2.2: viaggio dell'utente (configurazione guidata, valute, tappe) ===== */
+
+/* Primo avvio: la configurazione copre tutta l'app finché non ci sono valute e date */
+body.setup .app, body.setup .toast { display: none !important; }
+.setup {
+  min-height: 100%;
+  overflow-y: auto;
+  padding: calc(var(--safe-top) + 12px) 14px calc(var(--safe-bottom) + 20px);
+  max-width: 520px;
+  margin: 0 auto;
+}
+.setup-form { display: flex; flex-direction: column; gap: 12px; }
+.setup-form h2 { margin: 4px 0 0; font-size: 26px; font-weight: 700; }
+.setup-form .hint { margin: 0; }
+.setup-form .btn { padding: 14px 16px; font-size: 18px; margin-top: 4px; }
+.stack-form { display: flex; flex-direction: column; gap: 10px; }
+.stack-form .btn { align-self: flex-start; }
+.stack-form .row-btns { margin-bottom: 0; }
+.setup input[type="text"], .stack-form input[type="text"], .two select, .setup select {
+  width: 100%;
+  min-width: 0;
+  font-size: 17px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.setup .date-form input { font-size: 16px; }
+.setup .inline-form input { flex: 1 1 120px; }
+.setup input:focus, .setup select:focus, .stack-form input:focus, .two select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.two select { font-size: 15px; padding: 9px 8px; }
+select:disabled { color: var(--muted); background: var(--soft); }
+
+.stage-list { display: flex; flex-direction: column; margin: 2px 0 10px; }
+.stage-item { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--soft); font-size: 15px; }
+.stage-item .t { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.stage-item .sub { color: var(--muted); font-size: 13px; font-weight: 500; }
+.stage-item.on .t { color: var(--accent); }
+.small-btn { padding: 7px 10px; font-size: 14px; flex: 0 0 auto; }

@@ -1,4 +1,5 @@
 // Logica pura della Cassa di viaggio: niente DOM, niente rete. Testata con `node --test`.
+// Nessun viaggio è preimpostato: destinazione, valute, date e tappe le sceglie l'utente.
 
 export const CATEGORIES = [
   { id: 'cibo', label: 'Cibo' },
@@ -6,17 +7,8 @@ export const CATEGORIES = [
   { id: 'alloggio', label: 'Alloggio' },
   { id: 'attivita', label: 'Attività' },
   { id: 'spesa', label: 'Spesa' },
-  { id: 'massaggi', label: 'Massaggi' },
+  { id: 'massaggi', label: 'Benessere' }, // id storico: le spese salvate restano in questa categoria
   { id: 'altro', label: 'Altro' },
-];
-
-// Tappe nell'ordine del viaggio. `short` serve dove lo spazio è poco (riga delle tappe nella Cassa).
-export const STAGES = [
-  { id: 'bangkok', label: 'Bangkok', short: 'Bangkok' },
-  { id: 'pattaya', label: 'Pattaya', short: 'Pattaya' },
-  { id: 'phuket', label: 'Phuket', short: 'Phuket' },
-  { id: 'koh-samui', label: 'Koh Samui', short: 'Samui' },
-  { id: 'koh-phangan', label: 'Koh Phangan', short: 'Phangan' },
 ];
 
 export const NO_STAGE_LABEL = 'Senza tappa';
@@ -32,41 +24,194 @@ export const PLAN_KINDS = [
   { id: 'volo', label: 'Volo', group: 'voli' },
   { id: 'alloggio', label: 'Alloggio', group: 'alloggi' },
   { id: 'volo-interno', label: 'Volo interno', group: 'spostamenti' },
+  { id: 'treno', label: 'Treno', group: 'spostamenti' },
   { id: 'traghetto', label: 'Traghetto', group: 'spostamenti' },
   { id: 'bus', label: 'Bus', group: 'spostamenti' },
   { id: 'taxi', label: 'Taxi / transfer', group: 'spostamenti' },
 ];
 
-// Date del viaggio (giorni locali, estremi inclusi). Si possono cambiare in Impostazioni.
-export const DEFAULT_TRIP = { start: '2026-11-28', end: '2027-01-02' };
+// ---- Valute ----
 
-export const CURRENCIES = { THB: '฿', EUR: '€' };
+// Valute in corso (ISO 4217, senza fondi, metalli e codici di prova). L'utente sceglie la valuta locale
+// (quella del posto) e quella di casa: possono anche coincidere (viaggio nel proprio paese o nella stessa area).
+export const CURRENCY_CODES = [
+  'AED', 'AFN', 'ALL', 'AMD', 'AOA', 'ARS', 'AUD', 'AWG', 'AZN', 'BAM', 'BBD', 'BDT', 'BHD', 'BIF', 'BMD', 'BND',
+  'BOB', 'BRL', 'BSD', 'BTN', 'BWP', 'BYN', 'BZD', 'CAD', 'CDF', 'CHF', 'CLP', 'CNY', 'COP', 'CRC', 'CUP', 'CVE',
+  'CZK', 'DJF', 'DKK', 'DOP', 'DZD', 'EGP', 'ERN', 'ETB', 'EUR', 'FJD', 'FKP', 'GBP', 'GEL', 'GHS', 'GIP', 'GMD',
+  'GNF', 'GTQ', 'GYD', 'HKD', 'HNL', 'HTG', 'HUF', 'IDR', 'ILS', 'INR', 'IQD', 'IRR', 'ISK', 'JMD', 'JOD', 'JPY',
+  'KES', 'KGS', 'KHR', 'KMF', 'KPW', 'KRW', 'KWD', 'KYD', 'KZT', 'LAK', 'LBP', 'LKR', 'LRD', 'LSL', 'LYD', 'MAD',
+  'MDL', 'MGA', 'MKD', 'MMK', 'MNT', 'MOP', 'MRU', 'MUR', 'MVR', 'MWK', 'MXN', 'MYR', 'MZN', 'NAD', 'NGN', 'NIO',
+  'NOK', 'NPR', 'NZD', 'OMR', 'PAB', 'PEN', 'PGK', 'PHP', 'PKR', 'PLN', 'PYG', 'QAR', 'RON', 'RSD', 'RUB', 'RWF',
+  'SAR', 'SBD', 'SCR', 'SDG', 'SEK', 'SGD', 'SHP', 'SLE', 'SOS', 'SRD', 'SSP', 'STN', 'SVC', 'SYP', 'SZL', 'THB',
+  'TJS', 'TMT', 'TND', 'TOP', 'TRY', 'TTD', 'TWD', 'TZS', 'UAH', 'UGX', 'USD', 'UYU', 'UZS', 'VED', 'VES', 'VND',
+  'VUV', 'WST', 'XAF', 'XCD', 'XCG', 'XOF', 'XPF', 'YER', 'ZAR', 'ZMW', 'ZWG',
+];
 
-// Importi rapidi sopra il tastierino: un tocco = importo inserito.
-export const QUICK_AMOUNTS = { THB: [20, 50, 100, 200, 500], EUR: [5, 10, 20, 50, 100] };
+const CODE_SET = new Set(CURRENCY_CODES);
 
-export function quickAmounts(currency) {
-  return QUICK_AMOUNTS[currency] || QUICK_AMOUNTS.THB;
+export function isCurrency(code) {
+  return typeof code === 'string' && CODE_SET.has(code);
 }
 
-// Nessun tasso ancora: non si inventano conversioni finché non arriva un tasso vero o uno manuale.
-export const NO_RATE = { thbPerEur: null, date: null, source: 'nessuno' };
+// { local, home }: entrambe valute valide.
+export function isValidCurrencies(c) {
+  return !!c && isCurrency(c.local) && isCurrency(c.home);
+}
 
-export function hasRate(r) {
-  return !!r && r.thbPerEur > 0;
+let namesIt = null;
+export function currencyName(code) {
+  try {
+    namesIt = namesIt || new Intl.DisplayNames(['it'], { type: 'currency' });
+    const n = namesIt.of(code);
+    return n && n !== code ? n : code;
+  } catch {
+    return code;
+  }
+}
+
+// Elenco per la scelta della valuta, in ordine di nome.
+export function currencyOptions() {
+  return CURRENCY_CODES.map((code) => ({ code, name: currencyName(code) }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+}
+
+function symbolOf(code, display) {
+  try {
+    const p = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, currencyDisplay: display })
+      .formatToParts(1).find((x) => x.type === 'currency');
+    return p ? p.value : code;
+  } catch {
+    return code;
+  }
+}
+
+// Simboli brevi delle due valute del viaggio. Se si confondono (dollaro e dollaro, yen e yuan) si usano
+// i simboli lunghi (US$, CA$) e, se non basta, i codici.
+export function currencySymbols(local, home) {
+  if (local === home) return { local: symbolOf(local, 'narrowSymbol'), home: symbolOf(home, 'narrowSymbol') };
+  let a = symbolOf(local, 'narrowSymbol');
+  let b = symbolOf(home, 'narrowSymbol');
+  if (a === b) {
+    a = symbolOf(local, 'symbol');
+    b = symbolOf(home, 'symbol');
+  }
+  if (a === b) {
+    a = local;
+    b = home;
+  }
+  return { local: a, home: b };
+}
+
+// Decimali della valuta (yen 0, euro 2, dinaro kuwaitiano 3).
+export function currencyDigits(code) {
+  try {
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency: code }).resolvedOptions().maximumFractionDigits;
+  } catch {
+    return 2;
+  }
+}
+
+// ---- Cambio e conversioni ----
+
+// fx = { local, home, rate }: `rate` è quante unità della valuta locale vale 1 unità della valuta di casa.
+// Ogni spesa conserva importo, valuta e il tasso del momento: i totali dei giorni passati non cambiano
+// quando il tasso si aggiorna.
+
+// Nessun tasso ancora: non si inventano conversioni finché non arriva un tasso vero o uno manuale.
+export const NO_RATE = { value: null, pair: null, date: null, source: 'nessuno' };
+
+export const pairOf = (c) => `${c.local}/${c.home}`;
+
+// Tasso valido per le valute del viaggio: con la stessa valuta vale sempre 1.
+export function currentRate(currencies, r) {
+  if (!isValidCurrencies(currencies)) return null;
+  if (currencies.local === currencies.home) return 1;
+  return r && r.value > 0 && r.pair === pairOf(currencies) ? r.value : null;
+}
+
+// Importo convertito nelle due valute. Senza tasso la conversione è NaN (si mostra «—»), mai un valore inventato.
+export function convert(amount, currency, rate, fx) {
+  const same = fx.local === fx.home;
+  if (currency === fx.local) return { local: amount, home: same ? amount : rate > 0 ? amount / rate : NaN };
+  if (currency === fx.home) return { local: rate > 0 ? amount * rate : NaN, home: amount };
+  return { local: NaN, home: NaN };
+}
+
+// Spese (e voci già pagate) registrate quando non c'era ancora un tasso: ricevono il primo tasso vero.
+// Le voci ancora da pagare non hanno un tasso proprio: usano sempre quello attuale.
+// Restituisce quante righe sono state completate.
+export function fillMissingRate(list, rate) {
+  if (!(rate > 0)) return 0;
+  let n = 0;
+  for (const e of list) {
+    if (e.paid === false) continue;
+    if (!(e.rate > 0)) {
+      e.rate = rate;
+      n += 1;
+    }
+  }
+  return n;
+}
+
+export function expenseValue(e, fx) {
+  return convert(e.amount, e.currency, e.rate, fx);
+}
+
+// Voce del viaggio: se è pagata vale il tasso del pagamento, se è prevista quello di oggi.
+function planRate(item, fx) {
+  return item.paid && item.rate > 0 ? item.rate : fx.rate;
+}
+
+export function planValue(item, fx) {
+  return convert(item.amount, item.currency, planRate(item, fx), fx);
+}
+
+// ---- Tappe (le sceglie l'utente, anche nessuna) ----
+
+export const STAGE_NAME_MAX = 40;
+
+export function cleanStageName(name) {
+  return String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, STAGE_NAME_MAX);
+}
+
+// Una tappa ha un nome e, se l'utente le indica, le date (estremi inclusi).
+export function makeStage({ name, start = null, end = null }) {
+  const n = cleanStageName(name);
+  if (!n) throw new Error('nome non valido');
+  const s = isISODate(start) ? start : null;
+  const e = isISODate(end) ? end : null;
+  if (s && e && e < s) throw new Error('date non valide');
+  return { id: 't' + newId(), name: n, start: s, end: e };
+}
+
+// In ordine di viaggio: prima quelle con la data di inizio, poi le altre nell'ordine in cui sono state aggiunte.
+export function sortStages(stages) {
+  return stages
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const x = a.s.start || '9999';
+      const y = b.s.start || '9999';
+      return x < y ? -1 : x > y ? 1 : a.i - b.i;
+    })
+    .map((x) => x.s);
+}
+
+export function stageById(stages, id) {
+  return (id && stages.find((s) => s.id === id)) || null;
+}
+
+export function stageLabel(stages, id) {
+  const s = stageById(stages, id);
+  return s ? s.name : NO_STAGE_LABEL;
+}
+
+// La tappa i cui giorni comprendono `day` (la prima, se si sovrappongono).
+export function stageOfDay(stages, day) {
+  return sortStages(stages).find((s) => s.start && s.end && day >= s.start && day <= s.end) || null;
 }
 
 export function categoryById(id) {
   return CATEGORIES.find((c) => c.id === id) || CATEGORIES[CATEGORIES.length - 1];
-}
-
-export function stageById(id) {
-  return STAGES.find((s) => s.id === id) || null;
-}
-
-export function stageLabel(id) {
-  const s = stageById(id);
-  return s ? s.label : NO_STAGE_LABEL;
 }
 
 export function planKindById(id) {
@@ -74,56 +219,6 @@ export function planKindById(id) {
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;
-
-// Senza tasso la conversione è NaN (si mostra «—»), mai un valore inventato.
-export function toTHB(amount, currency, thbPerEur) {
-  if (currency !== 'EUR') return amount;
-  return thbPerEur > 0 ? amount * thbPerEur : NaN;
-}
-
-export function toEUR(amount, currency, thbPerEur) {
-  if (currency === 'EUR') return amount;
-  return thbPerEur > 0 ? amount / thbPerEur : NaN;
-}
-
-// Spese (e voci già pagate) registrate quando non c'era ancora un tasso: ricevono il primo tasso vero.
-// Le voci ancora da pagare non hanno un tasso proprio: usano sempre quello attuale.
-// Restituisce quante righe sono state completate.
-export function fillMissingRate(list, thbPerEur) {
-  if (!(thbPerEur > 0)) return 0;
-  let n = 0;
-  for (const e of list) {
-    if (e.paid === false) continue;
-    if (!(e.thbPerEur > 0)) {
-      e.thbPerEur = thbPerEur;
-      n += 1;
-    }
-  }
-  return n;
-}
-
-// Una spesa conserva importo e valuta originali più il tasso del momento:
-// così i totali dei giorni passati non cambiano quando il tasso si aggiorna.
-export function expenseTHB(e) {
-  return toTHB(e.amount, e.currency, e.thbPerEur);
-}
-
-export function expenseEUR(e) {
-  return toEUR(e.amount, e.currency, e.thbPerEur);
-}
-
-// Voce del viaggio: se è pagata vale il tasso del pagamento, se è prevista quello di oggi.
-function planRate(item, thbPerEur) {
-  return item.paid && item.thbPerEur > 0 ? item.thbPerEur : thbPerEur;
-}
-
-export function planTHB(item, thbPerEur) {
-  return toTHB(item.amount, item.currency, planRate(item, thbPerEur));
-}
-
-export function planEUR(item, thbPerEur) {
-  return toEUR(item.amount, item.currency, planRate(item, thbPerEur));
-}
 
 // Giorno locale del telefono, "YYYY-MM-DD".
 export function dayKey(date = new Date()) {
@@ -137,10 +232,12 @@ export function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+const stageId = (s) => (typeof s === 'string' && s ? s : null);
+
 // `day` è il giorno della spesa (scelto, anche passato o futuro); `ts` resta il momento della registrazione.
-export function makeExpense({ amount, currency, category, stage = null, thbPerEur, day = null, now = new Date() }) {
+export function makeExpense({ amount, currency, category, stage = null, rate, day = null, now = new Date() }) {
   if (!(amount > 0)) throw new Error('importo non valido');
-  if (!CURRENCIES[currency]) throw new Error('valuta non valida');
+  if (!isCurrency(currency)) throw new Error('valuta non valida');
   return {
     id: newId(),
     ts: now.getTime(),
@@ -148,32 +245,32 @@ export function makeExpense({ amount, currency, category, stage = null, thbPerEu
     amount: round2(amount),
     currency,
     category: categoryById(category).id,
-    stage: stageById(stage) ? stage : null,
-    thbPerEur: thbPerEur > 0 ? thbPerEur : null,
+    stage: stageId(stage),
+    rate: rate > 0 ? rate : null,
   };
 }
 
-export function makePlanItem({ kind, label = '', stage = null, amount, currency, paid = false, thbPerEur, now = new Date() }) {
+export function makePlanItem({ kind, label = '', stage = null, amount, currency, paid = false, rate, now = new Date() }) {
   if (!(amount > 0)) throw new Error('importo non valido');
-  if (!CURRENCIES[currency]) throw new Error('valuta non valida');
+  if (!isCurrency(currency)) throw new Error('valuta non valida');
   if (!planKindById(kind)) throw new Error('voce non valida');
   return {
     id: newId(),
     ts: now.getTime(),
     kind,
     label: String(label).trim().slice(0, 80),
-    stage: stageById(stage) ? stage : null,
+    stage: stageId(stage),
     amount: round2(amount),
     currency,
     paid: !!paid,
     // il tasso si fissa al pagamento; una voce prevista usa il tasso del giorno
-    thbPerEur: paid && thbPerEur > 0 ? thbPerEur : null,
+    rate: paid && rate > 0 ? rate : null,
   };
 }
 
 // Segna una voce come pagata (fissa il tasso di oggi) o di nuovo prevista.
-export function setPlanPaid(item, paid, thbPerEur) {
-  return { ...item, paid: !!paid, thbPerEur: paid && thbPerEur > 0 ? thbPerEur : null };
+export function setPlanPaid(item, paid, rate) {
+  return { ...item, paid: !!paid, rate: paid && rate > 0 ? rate : null };
 }
 
 // ---- Tastierino ----
@@ -201,34 +298,72 @@ export function keypadInput(current, key) {
   return next;
 }
 
-export function parseAmount(s) {
+// Numero scritto a mano: "1.234,50", "1234,5", "1234.5". Nessun arrotondamento (serve anche per i tassi).
+export function parseDecimal(s) {
   if (s === null || s === undefined) return 0;
   const str = String(s).trim().replace(/\s/g, '');
   if (!str) return 0;
-  // Accetta "1.234,50", "1234,5", "1234.5"
   let norm = str;
   if (norm.includes(',')) norm = norm.replace(/\./g, '').replace(',', '.');
   const n = Number(norm);
-  return Number.isFinite(n) && n > 0 ? round2(n) : 0;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function parseAmount(s) {
+  return round2(parseDecimal(s));
+}
+
+// ---- Importi rapidi ----
+
+// Serie 1-2-5: 1, 2, 5, 10, 20, 50, 100...
+const SERIES = [];
+for (let p = 1; p <= 1e6; p *= 10) SERIES.push(p, 2 * p, 5 * p);
+
+function niceIndex(x) {
+  let best = 0;
+  for (let i = 1; i < SERIES.length; i++) {
+    if (Math.abs(Math.log10(SERIES[i] / x)) < Math.abs(Math.log10(SERIES[best] / x))) best = i;
+  }
+  return Math.min(best, SERIES.length - 5);
+}
+
+export const QUICK_FALLBACK = [5, 10, 20, 50, 100];
+
+// Importi rapidi sopra il tastierino (un tocco = importo inserito), sensati per qualsiasi valuta:
+// - con il budget del giorno: circa l'1%, 2,5%, 5%, 10% e 25% del budget nella valuta locale
+//   (es. budget 2.000 → 20, 50, 100, 200, 500); nella valuta di casa dieci volte tanto (prenotazioni, tour);
+// - senza budget ma con il cambio: a partire da circa mezza unità di casa (es. 1 € ≈ 160 ¥ → 100, 200, 500...);
+// - senza nessuna delle due informazioni: 5, 10, 20, 50, 100.
+export function quickAmounts(currency, fx, budget = null) {
+  const side = currency === fx.local ? 'local' : 'home';
+  const factor = side === 'home' && fx.local !== fx.home ? 0.1 : 0.01;
+  const b = budget && budget.amount > 0 ? convert(budget.amount, budget.currency, fx.rate, fx)[side] : NaN;
+  let anchor = NaN;
+  if (Number.isFinite(b) && b > 0) anchor = b * factor;
+  else if (side === 'local' && (fx.rate > 0 || fx.local === fx.home)) anchor = 0.5 * (fx.local === fx.home ? 1 : fx.rate);
+  if (!(anchor > 0)) return [...QUICK_FALLBACK];
+  const i = niceIndex(anchor);
+  return SERIES.slice(i, i + 5);
 }
 
 // ---- Budget del giorno ----
 
 // Quadro del giorno: lo stato si calcola nella valuta in cui è impostato il budget,
 // il residuo si mostra in entrambe le valute al tasso attuale.
-export function dayBudget(spent, budget, thbPerEur) {
+export function dayBudget(spent, budget, fx) {
   if (!budget || !(budget.amount > 0)) {
-    return { ...budgetStatus(0, 0), remainingTHB: 0, remainingEUR: 0, budgetTHB: 0, budgetEUR: 0 };
+    return { ...budgetStatus(0, 0), remainingLocal: 0, remainingHome: 0 };
   }
-  const inEur = budget.currency === 'EUR';
-  const st = budgetStatus(inEur ? spent.eur : spent.thb, budget.amount);
-  return {
-    ...st,
-    remainingTHB: toTHB(st.remaining, budget.currency, thbPerEur),
-    remainingEUR: toEUR(st.remaining, budget.currency, thbPerEur),
-    budgetTHB: toTHB(budget.amount, budget.currency, thbPerEur),
-    budgetEUR: toEUR(budget.amount, budget.currency, thbPerEur),
-  };
+  const st = budgetStatus(spentIn(spent, budget.currency, fx), budget.amount);
+  const rem = convert(st.remaining, budget.currency, fx.rate, fx);
+  return { ...st, remainingLocal: rem.local, remainingHome: rem.home };
+}
+
+// Speso nella valuta del budget.
+export function spentIn(spent, currency, fx) {
+  if (currency === fx.local) return spent.local;
+  if (currency === fx.home) return spent.home;
+  return NaN;
 }
 
 // Stato del budget del giorno (speso e budget nella stessa valuta):
@@ -252,61 +387,64 @@ export function expensesOfDay(expenses, day) {
   return expenses.filter((e) => e.day === day);
 }
 
-export function totals(expenses) {
-  let thb = 0;
-  let eur = 0;
+export function totals(expenses, fx) {
+  let local = 0;
+  let home = 0;
   for (const e of expenses) {
-    thb += expenseTHB(e);
-    eur += expenseEUR(e);
+    const v = expenseValue(e, fx);
+    local += v.local;
+    home += v.home;
   }
-  return { thb, eur, count: expenses.length };
+  return { local, home, count: expenses.length };
 }
 
-export function totalsByCategory(expenses) {
+export function totalsByCategory(expenses, fx) {
   const map = new Map();
   for (const e of expenses) {
-    const cur = map.get(e.category) || { thb: 0, eur: 0, count: 0 };
-    cur.thb += expenseTHB(e);
-    cur.eur += expenseEUR(e);
+    const cur = map.get(e.category) || { local: 0, home: 0, count: 0 };
+    const v = expenseValue(e, fx);
+    cur.local += v.local;
+    cur.home += v.home;
     cur.count += 1;
     map.set(e.category, cur);
   }
   return CATEGORIES.filter((c) => map.has(c.id))
     .map((c) => ({ ...c, ...map.get(c.id) }))
-    .sort((a, b) => b.thb - a.thb);
+    .sort((a, b) => b.local - a.local);
 }
 
 // Per tappa, nell'ordine del viaggio: spese del giorno più voci del viaggio già pagate con quella tappa.
-// Le righe senza tappa (spese della v1, voli internazionali) finiscono in «Senza tappa», in fondo.
-export function totalsByStage(expenses, plan = [], thbPerEur = null) {
-  const keys = [...STAGES.map((s) => s.id), null];
-  const map = new Map(keys.map((k) => [k, { thb: 0, eur: 0, count: 0, dailyTHB: 0, dailyEUR: 0, planTHB: 0, planEUR: 0 }]));
-  const key = (id) => (stageById(id) ? id : null);
+// Le righe senza tappa (o con una tappa eliminata) finiscono in «Senza tappa», in fondo.
+export function totalsByStage(expenses, plan, fx, stages = []) {
+  const ordered = sortStages(stages);
+  const keys = [...ordered.map((s) => s.id), null];
+  const map = new Map(keys.map((k) => [k, { count: 0, dailyLocal: 0, dailyHome: 0, planLocal: 0, planHome: 0 }]));
+  const key = (id) => (stageById(stages, id) ? id : null);
   for (const e of expenses) {
     const r = map.get(key(e.stage));
-    const t = expenseTHB(e);
-    const u = expenseEUR(e);
-    r.dailyTHB += t;
-    r.dailyEUR += u;
+    const v = expenseValue(e, fx);
+    r.dailyLocal += v.local;
+    r.dailyHome += v.home;
     r.count += 1;
   }
   for (const p of plan) {
     if (!p.paid) continue;
     const r = map.get(key(p.stage));
-    r.planTHB += planTHB(p, thbPerEur);
-    r.planEUR += planEUR(p, thbPerEur);
+    const v = planValue(p, fx);
+    r.planLocal += v.local;
+    r.planHome += v.home;
     r.count += 1;
   }
   return keys
     .map((k) => {
       const r = map.get(k);
-      return { id: k, label: stageLabel(k), ...r, thb: r.dailyTHB + r.planTHB, eur: r.dailyEUR + r.planEUR };
+      return { id: k, label: stageLabel(stages, k), ...r, local: r.dailyLocal + r.planLocal, home: r.dailyHome + r.planHome };
     })
     .filter((r) => r.count > 0);
 }
 
 // Giorni con almeno una spesa, dal più recente.
-export function dailySummary(expenses) {
+export function dailySummary(expenses, fx) {
   const byDay = new Map();
   for (const e of expenses) {
     if (!byDay.has(e.day)) byDay.set(e.day, []);
@@ -317,7 +455,7 @@ export function dailySummary(expenses) {
     .reverse()
     .map((day) => {
       const list = byDay.get(day).sort((a, b) => b.ts - a.ts);
-      return { day, ...totals(list), categories: totalsByCategory(list), expenses: list };
+      return { day, ...totals(list, fx), categories: totalsByCategory(list, fx), expenses: list };
     });
 }
 
@@ -331,6 +469,12 @@ function dateOf(day) {
 // Giorni da `a` a `b` (b - a), su giorni locali.
 export function daysBetween(a, b) {
   return Math.round((dateOf(b) - dateOf(a)) / 86400000);
+}
+
+export function addDays(day, n) {
+  const d = dateOf(day);
+  d.setDate(d.getDate() + n);
+  return dayKey(d);
 }
 
 export function tripDays(trip) {
@@ -355,10 +499,11 @@ export function tripPhase(trip, today) {
 }
 
 const sum = (list, fn) => list.reduce((acc, x) => {
-  acc.thb += fn(x, 'thb');
-  acc.eur += fn(x, 'eur');
+  const v = fn(x);
+  acc.local += v.local;
+  acc.home += v.home;
   return acc;
-}, { thb: 0, eur: 0 });
+}, { local: 0, home: 0 });
 
 // Quadro del viaggio:
 // - previsto   = tutte le voci (pagate e da pagare) + budget del giorno × giorni del viaggio
@@ -368,7 +513,7 @@ const sum = (list, fn) => list.reduce((acc, x) => {
 // La media al giorno è quella delle spese del giorno nelle date del viaggio fino a oggi (sui giorni con spese);
 // finché non ce ne sono si usa il budget del giorno. Un giorno futuro con spese segnate (data scelta a mano,
 // o un piano) vale quanto le sue spese: non si stima di nuovo con la media.
-export function tripSummary({ expenses, plan, budget, trip, today, thbPerEur }) {
+export function tripSummary({ expenses, plan, budget, trip, today, fx }) {
   const days = tripDays(trip);
   const left = daysLeft(trip, today);
   const inTrip = expenses.filter((e) => e.day >= trip.start && e.day <= trip.end);
@@ -376,8 +521,8 @@ export function tripSummary({ expenses, plan, budget, trip, today, thbPerEur }) 
   const ahead = inTrip.filter((e) => e.day > today);
   const paid = plan.filter((p) => p.paid);
   const unpaid = plan.filter((p) => !p.paid);
-  const planVal = (p, cur) => (cur === 'thb' ? planTHB(p, thbPerEur) : planEUR(p, thbPerEur));
-  const expVal = (e, cur) => (cur === 'thb' ? expenseTHB(e) : expenseEUR(e));
+  const planVal = (p) => planValue(p, fx);
+  const expVal = (e) => expenseValue(e, fx);
 
   const items = sum(plan, planVal);
   const itemsPaid = sum(paid, planVal);
@@ -389,31 +534,29 @@ export function tripSummary({ expenses, plan, budget, trip, today, thbPerEur }) 
   const daysToEstimate = Math.max(0, left - daysAhead);
 
   const hasBudget = !!budget && budget.amount > 0;
-  const budgetDay = hasBudget
-    ? { thb: toTHB(budget.amount, budget.currency, thbPerEur), eur: toEUR(budget.amount, budget.currency, thbPerEur) }
-    : { thb: 0, eur: 0 };
+  const budgetDay = hasBudget ? convert(budget.amount, budget.currency, fx.rate, fx) : { local: 0, home: 0 };
 
   let avg;
   let avgSource;
   if (daysWithSpending > 0) {
-    avg = { thb: daily.thb / daysWithSpending, eur: daily.eur / daysWithSpending };
+    avg = { local: daily.local / daysWithSpending, home: daily.home / daysWithSpending };
     avgSource = 'spese';
   } else if (hasBudget) {
     avg = budgetDay;
     avgSource = 'budget';
   } else {
-    avg = { thb: 0, eur: 0 };
+    avg = { local: 0, home: 0 };
     avgSource = 'nessuna';
   }
 
-  const both = (f) => ({ thb: f('thb'), eur: f('eur') });
+  const both = (f) => ({ local: f('local'), home: f('home') });
   const previsto = both((c) => items[c] + budgetDay[c] * days);
   const speso = both((c) => itemsPaid[c] + daily[c]);
   const proiezione = both((c) => speso[c] + itemsUnpaid[c] + dailyAhead[c] + avg[c] * daysToEstimate);
 
   let level = 'none';
-  if (previsto.thb > 0 && Number.isFinite(proiezione.thb)) {
-    const ratio = proiezione.thb / previsto.thb;
+  if (previsto.local > 0 && Number.isFinite(proiezione.local)) {
+    const ratio = proiezione.local / previsto.local;
     level = ratio <= 1 ? 'green' : ratio <= 1.1 ? 'yellow' : 'red';
   }
 
@@ -448,64 +591,113 @@ export function isPositiveNumber(v) {
   return typeof v === 'number' && Number.isFinite(v) && v > 0;
 }
 
-// Risposta di api.frankfurter.dev/v2/rate/thb/eur: euro per 1 baht (circa 0,026).
-// Il formato si legge in modo tollerante: { rate } oppure { rates: { EUR } }.
+const sig6 = (n) => Number(n.toPrecision(6));
+
+// Indirizzi delle fonti del cambio per le valute del viaggio (codici controllati: solo 3 lettere maiuscole note).
+export function rateUrls({ local, home }) {
+  if (!isCurrency(local) || !isCurrency(home) || local === home) return [];
+  return [
+    `https://api.frankfurter.dev/v2/rate/${local.toLowerCase()}/${home.toLowerCase()}`,
+    `https://api.frankfurter.dev/v1/latest?base=${home}&symbols=${local}`,
+    `https://open.er-api.com/v6/latest/${home}`,
+  ];
+}
+
+// Risposta di api.frankfurter.dev/v2/rate/{locale}/{casa}: unità di casa per 1 unità locale.
+// Il formato si legge in modo tollerante: { rate } oppure { rates: { CASA } }.
 // La data si convalida per intero, senza troncarla: "2026-11-17<script>" o "2026-11-17T00:00Z" si scartano.
-export function parseFrankfurterV2(json) {
-  const eurPerThb = json ? (json.rate ?? (json.rates && json.rates.EUR)) : undefined;
+export function parseFrankfurterV2(json, { home }) {
+  const homePerLocal = json ? (json.rate ?? (json.rates && json.rates[home])) : undefined;
   const date = json ? json.date : undefined;
-  if (!isPositiveNumber(eurPerThb) || !isISODate(date)) throw new Error('risposta frankfurter v2 non valida');
-  return { thbPerEur: Math.round((1 / eurPerThb) * 10000) / 10000, date, source: 'frankfurter.dev (BCE)' };
+  if (!isPositiveNumber(homePerLocal) || !isISODate(date)) throw new Error('risposta frankfurter v2 non valida');
+  return { value: sig6(1 / homePerLocal), date, source: 'frankfurter.dev (BCE)' };
 }
 
-// Risposta di api.frankfurter.dev/v1/latest?base=EUR&symbols=THB (stesso formato di api.frankfurter.app)
-export function parseFrankfurter(json) {
-  const v = json && json.rates && json.rates.THB;
+// Risposta di api.frankfurter.dev/v1/latest?base={casa}&symbols={locale} (stesso formato di api.frankfurter.app)
+export function parseFrankfurter(json, { local }) {
+  const v = json && json.rates && json.rates[local];
   if (!isPositiveNumber(v) || !isISODate(json.date)) throw new Error('risposta frankfurter non valida');
-  return { thbPerEur: v, date: json.date, source: 'frankfurter.app (BCE)' };
+  return { value: v, date: json.date, source: 'frankfurter.app (BCE)' };
 }
 
-// Risposta di open.er-api.com/v6/latest/EUR
-export function parseErApi(json) {
-  const v = json && json.rates && json.rates.THB;
+// Risposta di open.er-api.com/v6/latest/{casa}
+export function parseErApi(json, { local }) {
+  const v = json && json.rates && json.rates[local];
   const t = json && json.time_last_update_unix;
   if (!json || json.result !== 'success' || !isPositiveNumber(v) || !Number.isInteger(t) || t <= 0) {
     throw new Error('risposta er-api non valida');
   }
   const date = dayKey(new Date(t * 1000));
   if (!isISODate(date)) throw new Error('risposta er-api non valida');
-  return { thbPerEur: v, date, source: 'open.er-api.com' };
+  return { value: v, date, source: 'open.er-api.com' };
 }
 
-// Plausibilità: protegge da risposte strane o errori di battitura nel tasso manuale.
-export function isPlausibleRate(thbPerEur) {
-  return thbPerEur >= 10 && thbPerEur <= 100;
+// Un tasso è accettabile se è un numero positivo e finito. Un tasso scritto a mano molto lontano dall'ultimo
+// noto (più di 5 volte, tipico di uno zero in più o in meno) va confermato.
+export function isPlausibleRate(v) {
+  return isPositiveNumber(v) && v < 1e9;
+}
+
+export function isFarFromRate(v, previous) {
+  return previous > 0 && (v / previous > 5 || previous / v > 5);
 }
 
 // ---- Formattazione ----
 
-const fmtTHB = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 0, useGrouping: 'always' });
-const fmtEUR = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
-
-export function formatTHB(n) {
-  if (!Number.isFinite(n)) return '—';
-  return '฿' + fmtTHB.format(Math.round(n));
+// Un importo in valuta «piccola» (molte unità per 1 unità dell'altra valuta, come yen, rupie o fiorini)
+// si mostra senza decimali nei totali: è più leggibile e i centesimi non contano.
+export function wholeUnits(code, fx) {
+  if (currencyDigits(code) === 0) return true;
+  if (fx.local === fx.home || !(fx.rate > 0)) return false;
+  if (code === fx.local) return fx.rate >= 10;
+  if (code === fx.home) return fx.rate <= 0.1;
+  return false;
 }
 
-export function formatEUR(n) {
-  if (!Number.isFinite(n)) return '—';
-  return '€' + fmtEUR.format(n);
+const nf = new Map();
+function numberFormat(min, max) {
+  const k = min + '/' + max;
+  if (!nf.has(k)) nf.set(k, new Intl.NumberFormat('it-IT', { minimumFractionDigits: min, maximumFractionDigits: max, useGrouping: 'always' }));
+  return nf.get(k);
 }
 
-export function formatMoney(amount, currency) {
-  if (currency === 'EUR') return formatEUR(amount);
-  const hasCents = Math.round(amount * 100) % 100 !== 0;
-  return '฿' + new Intl.NumberFormat('it-IT', { minimumFractionDigits: hasCents ? 2 : 0, maximumFractionDigits: 2, useGrouping: 'always' }).format(amount);
+const withSymbol = (sym, s) => (/\p{L}$/u.test(sym) ? `${sym} ${s}` : sym + s);
+
+// Formattatori per le valute del viaggio: `local(n)` e `home(n)` per i totali, `money(importo, valuta)`
+// per un importo inserito (decimali solo se ci sono, nelle valute «piccole»).
+export function makeFormat(fx) {
+  const sym = currencySymbols(fx.local, fx.home);
+  const symbolFor = (code) => (code === fx.local ? sym.local : code === fx.home ? sym.home : code);
+  const digits = (code) => currencyDigits(code);
+  const total = (n, code) => {
+    if (!Number.isFinite(n)) return '—';
+    const d = wholeUnits(code, fx) ? 0 : digits(code);
+    const v = d === 0 ? Math.round(n) : n;
+    return withSymbol(symbolFor(code), numberFormat(d, d).format(Object.is(v, -0) ? 0 : v));
+  };
+  const money = (amount, code) => {
+    if (!Number.isFinite(amount)) return '—';
+    const d = digits(code);
+    const whole = wholeUnits(code, fx);
+    const hasCents = Math.round(amount * 100) % 100 !== 0;
+    const min = whole ? (hasCents && d > 0 ? Math.min(2, d) : 0) : d;
+    return withSymbol(symbolFor(code), numberFormat(min, Math.max(min, d)).format(amount));
+  };
+  return {
+    same: fx.local === fx.home,
+    symbol: symbolFor,
+    local: (n) => total(n, fx.local),
+    home: (n) => total(n, fx.home),
+    money,
+    // "1 € = 160,00 ¥"
+    rate: (value) => `1 ${sym.home} = ${formatRate(value)} ${sym.local}`,
+  };
 }
 
-export function formatRate(thbPerEur) {
-  if (!(thbPerEur > 0)) return '—';
-  return new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(thbPerEur);
+export function formatRate(value) {
+  if (!(value > 0)) return '—';
+  if (value >= 1) return numberFormat(2, 2).format(value);
+  return new Intl.NumberFormat('it-IT', { maximumSignificantDigits: 4, useGrouping: 'always' }).format(value);
 }
 
 const RELATIVE_DAYS = { '-1': 'Ieri', 0: 'Oggi', 1: 'Domani' };
@@ -529,9 +721,17 @@ export function formatShortDate(day) {
   return `${d}/${m}/${y}`;
 }
 
-// "28/11" (giorno/mese, senza anno)
+// "17/11" (giorno/mese, senza anno)
 export function formatDayMonth(day) {
   return formatShortDate(day).slice(0, 5);
+}
+
+// Date di una tappa: "12/12–18/12", "dal 12/12", "fino al 18/12" o "".
+export function stageDates(s) {
+  if (s.start && s.end) return `${formatDayMonth(s.start)}–${formatDayMonth(s.end)}`;
+  if (s.start) return `dal ${formatDayMonth(s.start)}`;
+  if (s.end) return `fino al ${formatDayMonth(s.end)}`;
+  return '';
 }
 
 // ---- CSV ----
@@ -543,11 +743,16 @@ function csvCell(v) {
 
 // Valori non calcolabili (riga senza tasso) restano vuoti nel CSV.
 const num2 = (n) => (Number.isFinite(n) ? n.toFixed(2).replace('.', ',') : '');
+const numRate = (n) => (Number.isFinite(n) && n > 0 ? String(n >= 1 ? n.toFixed(2) : Number(n.toPrecision(6))).replace('.', ',') : '');
 
-export const CSV_HEADER = [
-  'data', 'ora', 'tipo', 'voce', 'tappa', 'stato', 'descrizione',
-  'importo', 'valuta', 'importo_thb', 'importo_eur', 'thb_per_eur', 'modalita', 'piano',
-];
+// Le colonne delle conversioni portano i codici delle valute del viaggio (es. importo_JPY, importo_EUR, JPY_per_EUR).
+export function csvHeader(fx) {
+  const same = fx.local === fx.home;
+  return [
+    'data', 'ora', 'tipo', 'voce', 'tappa', 'stato', 'descrizione', 'importo', 'valuta',
+    `importo_${fx.local}`, same ? `importo_${fx.home}_casa` : `importo_${fx.home}`, `${fx.local}_per_${fx.home}`, 'modalita', 'piano',
+  ];
+}
 
 // CSV per Excel/Numbers in italiano: separatore ";" e virgola decimale.
 // Una riga per ogni spesa del giorno (tipo «spesa», voce = categoria) e per ogni voce del viaggio
@@ -555,49 +760,58 @@ export const CSV_HEADER = [
 // Per una spesa `data` è il giorno scelto; `ora` è l'ora di registrazione, solo se registrata quel giorno.
 // `modalita` è «reale» o «piano» (con il nome del piano): i piani non vanno sommati al reale.
 // Le voci previste si convertono al tasso attuale.
-export function toCSV(expenses, plan = [], thbPerEur = null, { mode = 'reale', name = '' } = {}) {
-  return CSV_HEADER.map(csvCell).join(';') + '\r\n' + csvRows(expenses, plan, thbPerEur, mode, name);
+export function toCSV(set, fx, { mode = 'reale', name = '' } = {}) {
+  return csvHeader(fx).map(csvCell).join(';') + '\r\n' + csvRows(set, fx, mode, name);
 }
 
 // Tutti i dati in un solo file: prima il reale, poi ogni piano.
-export function toCSVAll(real, scenarios = [], thbPerEur = null) {
-  return CSV_HEADER.map(csvCell).join(';') + '\r\n'
-    + csvRows(real.expenses, real.plan, thbPerEur, 'reale', '')
-    + scenarios.map((s) => csvRows(s.expenses, s.plan, thbPerEur, 'piano', s.name)).join('');
+export function toCSVAll(real, scenarios, fx) {
+  return csvHeader(fx).map(csvCell).join(';') + '\r\n'
+    + csvRows(real, fx, 'reale', '')
+    + scenarios.map((s) => csvRows(s, fx, 'piano', s.name)).join('');
 }
 
-function csvRows(expenses, plan, thbPerEur, mode, name) {
+// `set` = { expenses, plan, settings: { stages } }
+function csvRows(set, fx, mode, name) {
+  const stages = (set.settings && set.settings.stages) || [];
+  const stageCell = (id) => (stageById(stages, id) ? stageLabel(stages, id) : '');
   const time = (ts) => {
     const t = new Date(ts);
     return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
   };
   const rows = [
-    ...expenses.map((e) => ({
-      day: e.day,
-      ts: e.ts,
-      cells: [
-        e.day, dayKey(new Date(e.ts)) === e.day ? time(e.ts) : '', 'spesa', categoryById(e.category).label,
-        stageById(e.stage) ? stageLabel(e.stage) : '', 'pagato', '',
-        num2(e.amount), e.currency, num2(expenseTHB(e)), num2(expenseEUR(e)), num2(e.thbPerEur), mode, name,
-      ],
-    })),
-    ...plan.map((p) => ({
-      day: dayKey(new Date(p.ts)),
-      ts: p.ts,
-      cells: [
-        dayKey(new Date(p.ts)), time(p.ts), 'viaggio', (planKindById(p.kind) || { label: p.kind }).label,
-        stageById(p.stage) ? stageLabel(p.stage) : '', p.paid ? 'pagato' : 'previsto', p.label || '',
-        num2(p.amount), p.currency, num2(planTHB(p, thbPerEur)), num2(planEUR(p, thbPerEur)), num2(planRate(p, thbPerEur)), mode, name,
-      ],
-    })),
+    ...set.expenses.map((e) => {
+      const v = expenseValue(e, fx);
+      return {
+        day: e.day,
+        ts: e.ts,
+        cells: [
+          e.day, dayKey(new Date(e.ts)) === e.day ? time(e.ts) : '', 'spesa', categoryById(e.category).label,
+          stageCell(e.stage), 'pagato', '',
+          num2(e.amount), e.currency, num2(v.local), num2(v.home), numRate(fx.local === fx.home ? 1 : e.rate), mode, name,
+        ],
+      };
+    }),
+    ...set.plan.map((p) => {
+      const v = planValue(p, fx);
+      return {
+        day: dayKey(new Date(p.ts)),
+        ts: p.ts,
+        cells: [
+          dayKey(new Date(p.ts)), time(p.ts), 'viaggio', (planKindById(p.kind) || { label: p.kind }).label,
+          stageCell(p.stage), p.paid ? 'pagato' : 'previsto', p.label || '',
+          num2(p.amount), p.currency, num2(v.local), num2(v.home), numRate(fx.local === fx.home ? 1 : planRate(p, fx)), mode, name,
+        ],
+      };
+    }),
   ].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.ts - b.ts));
   return rows.map((r) => r.cells.map(csvCell).join(';') + '\r\n').join('');
 }
 
 // ---- Pianificazione (viaggi ipotetici) ----
 
-// Un piano ha dati suoi (spese, voci del viaggio, budget, date, tappa) e non si somma mai al reale.
-// Tasso di cambio e valuta di inserimento restano comuni.
+// Un piano ha dati suoi (spese, voci del viaggio, budget, date, tappe) e non si somma mai al reale.
+// Valute, tasso di cambio e valuta di inserimento restano comuni.
 export const SCENARIO_NAME_MAX = 40;
 
 export function cleanScenarioName(name) {
@@ -610,39 +824,62 @@ export function nextScenarioName(list, base = 'Piano') {
   for (let i = 1; ; i++) if (!used.has(`${base} ${i}`)) return `${base} ${i}`;
 }
 
-// Piano vuoto (con le date indicate) oppure copia completa dei dati reali (`copyFrom`): la copia è profonda,
-// quindi cambiare il piano non tocca mai il reale.
-export function makeScenario({ name, copyFrom = null, trip = DEFAULT_TRIP, now = Date.now() }) {
-  const src = copyFrom ? JSON.parse(JSON.stringify(copyFrom)) : null;
-  const settings = src ? src.settings || {} : {};
+// Piano vuoto (con le date e le tappe indicate) oppure copia completa dei dati reali (`copyFrom`): la copia è
+// profonda, quindi cambiare il piano non tocca mai il reale.
+export function makeScenario({ name, copyFrom = null, trip = null, stages = [], now = Date.now() }) {
+  const src = JSON.parse(JSON.stringify(copyFrom || { expenses: [], plan: [], settings: { trip, stages } }));
+  const settings = src.settings || {};
+  const list = Array.isArray(settings.stages) ? settings.stages : [];
   return {
     id: newId(),
     name: cleanScenarioName(name) || 'Piano',
     createdAt: now,
-    expenses: src ? src.expenses || [] : [],
-    plan: src ? src.plan || [] : [],
+    expenses: src.expenses || [],
+    plan: src.plan || [],
     settings: {
-      budget: settings.budget || null,
-      trip: isValidTrip(settings.trip) ? { ...settings.trip } : { ...trip },
-      stage: stageById(settings.stage) ? settings.stage : STAGES[0].id,
+      budget: copyFrom ? settings.budget || null : null,
+      trip: isValidTrip(settings.trip) ? { ...settings.trip } : null,
+      stages: copyFrom ? list : JSON.parse(JSON.stringify(stages)),
+      stage: copyFrom && stageById(list, settings.stage) ? settings.stage : null,
     },
   };
 }
 
+// ---- Primo avvio ----
+
+// Servono le valute e le date del viaggio; il resto (nome, destinazione, budget, tappe) è facoltativo.
+export function needsSetup(settings) {
+  return !isValidCurrencies(settings && settings.currencies) || !isValidTrip(settings && settings.trip);
+}
+
+export const TEXT_MAX = 60;
+export const cleanText = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, TEXT_MAX);
+
 // ---- Migrazione dei dati salvati ----
 
-// v1 (1.0–1.1.2): cdv.expenses = [{ id, ts, day, amount, currency, category, thbPerEur }], cdv.settings.
+// v1 (1.0–1.1.2): cdv.expenses = [{ id, ts, day, amount, currency, category, tasso }], cdv.settings.
 // v2 (2.0.0): le spese hanno anche `stage`; nuove impostazioni (tappa attuale, date del viaggio) e nuove voci (cdv.plan).
-// v3 (2.1.0): `day` di una spesa si può scegliere (era sempre il giorno di registrazione: nessun cambio ai dati);
-//             i piani ipotetici stanno a parte in cdv.piani, ognuno con spese, voci e impostazioni sue.
-// La migrazione aggiunge e corregge, non toglie: i campi sconosciuti restano, le righe illeggibili si contano
-// (e restano nella copia di sicurezza che l'app salva prima di migrare). Rieseguirla non cambia niente.
-export const SCHEMA_VERSION = 3;
+// v3 (2.1.0): `day` di una spesa si può scegliere; i piani ipotetici stanno a parte in cdv.piani.
+// v4 (2.2.0): app generica. Valute del viaggio scelte dall'utente (settings.currencies = { local, home }); ogni riga
+//             ha `rate` (unità locali per 1 unità di casa) al posto del vecchio campo del tasso; tappe dell'utente in
+//             settings.stages (per il reale e per ogni piano); nome e destinazione del viaggio.
+// Fino alla v3 l'app aveva una sola coppia di valute (LEGACY_CURRENCIES) e tappe fisse: le tappe usate nei dati
+// diventano tappe dell'utente con lo stesso id, così nessuna spesa perde la sua tappa.
+// La migrazione aggiunge e corregge: le righe illeggibili si contano (e restano nella copia di sicurezza che l'app
+// salva prima di migrare). Rieseguirla non cambia niente.
+export const SCHEMA_VERSION = 4;
+export const LEGACY_CURRENCIES = Object.freeze({ local: 'THB', home: 'EUR' }); // unica coppia delle versioni 1.x–2.1
+const LEGACY_RATE_FIELD = 'thbPerEur';
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const toNum = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
 
-function migrateRow(raw, now, seen, extra) {
+// Nome leggibile da un id di tappa delle versioni precedenti: "nome-composto" -> "Nome Composto".
+export function legacyStageName(id) {
+  return cleanStageName(String(id).split(/[-_]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')) || 'Tappa';
+}
+
+function migrateRow(raw, now, seen, ctx, extra) {
   if (!isObj(raw)) return null;
   const amount = toNum(raw.amount);
   if (!Number.isFinite(amount) || amount <= 0) return null;
@@ -651,25 +888,34 @@ function migrateRow(raw, now, seen, extra) {
   let id = typeof raw.id === 'string' && raw.id ? raw.id : newId();
   while (seen.has(id)) id += '-' + Math.random().toString(36).slice(2, 5);
   seen.add(id);
-  const rate = toNum(raw.thbPerEur);
+  const { [LEGACY_RATE_FIELD]: legacyRate, ...rest } = raw;
+  const rate = toNum(ctx.legacy ? legacyRate ?? raw.rate : raw.rate);
   return {
-    ...raw,
+    ...rest,
     id,
     ts,
     amount: round2(amount),
-    currency: raw.currency === 'EUR' ? 'EUR' : 'THB',
-    stage: stageById(raw.stage) ? raw.stage : null,
-    thbPerEur: rate > 0 ? rate : null,
+    currency: rowCurrency(raw.currency, ctx),
+    stage: ctx.stageIds.has(raw.stage) ? raw.stage : null,
+    rate: rate > 0 ? rate : null,
     ...extra(raw, ts),
   };
 }
 
+// Valuta di una riga: nei dati vecchi c'erano solo le due valute fisse; poi una delle due valute del viaggio.
+function rowCurrency(c, ctx) {
+  const { local, home } = ctx.currencies || LEGACY_CURRENCIES;
+  if (ctx.legacy) return c === LEGACY_CURRENCIES.home ? LEGACY_CURRENCIES.home : LEGACY_CURRENCIES.local;
+  if (c === local || c === home) return c;
+  return isCurrency(c) ? c : local;
+}
+
 // Spese e voci di un insieme di dati (il reale o un piano). Gli id sono unici dentro l'insieme.
-function migrateLists(expenses, plan, now, report) {
+function migrateLists(expenses, plan, now, report, ctx) {
   const seen = new Set();
   const outExpenses = [];
   for (const raw of Array.isArray(expenses) ? expenses : []) {
-    const e = migrateRow(raw, now, seen, (r, ts) => ({
+    const e = migrateRow(raw, now, seen, ctx, (r, ts) => ({
       day: isISODate(r.day) ? r.day : dayKey(new Date(ts)),
       category: categoryById(r.category).id,
     }));
@@ -680,47 +926,110 @@ function migrateLists(expenses, plan, now, report) {
   const outPlan = [];
   for (const raw of Array.isArray(plan) ? plan : []) {
     const p = isObj(raw) && planKindById(raw.kind)
-      ? migrateRow(raw, now, seen, (r) => ({ label: typeof r.label === 'string' ? r.label.slice(0, 80) : '', paid: r.paid === true }))
+      ? migrateRow(raw, now, seen, ctx, (r) => ({ label: typeof r.label === 'string' ? r.label.slice(0, 80) : '', paid: r.paid === true }))
       : null;
     if (p) {
-      if (!p.paid) p.thbPerEur = null;
+      if (!p.paid) p.rate = null;
       outPlan.push(p);
     } else report.dropped += 1;
   }
   return { expenses: outExpenses, plan: outPlan };
 }
 
-function migrateBudget(b) {
+function migrateBudget(b, ctx) {
   const amount = isObj(b) ? toNum(b.amount) : NaN;
-  return amount > 0 ? { amount: round2(amount), currency: b.currency === 'EUR' ? 'EUR' : 'THB' } : null;
+  if (!(amount > 0)) return null;
+  const c = ctx.currencies;
+  let currency;
+  if (ctx.legacy) currency = b.currency === LEGACY_CURRENCIES.home ? LEGACY_CURRENCIES.home : LEGACY_CURRENCIES.local;
+  else if (c && (b.currency === c.local || b.currency === c.home)) currency = b.currency;
+  else if (c) currency = c.local;
+  else return null;
+  return { amount: round2(amount), currency };
 }
 
-// Impostazioni proprie di un insieme di dati: budget del giorno, date del viaggio, tappa attuale.
-function migrateOwnSettings(s, defaultTrip) {
+// Tappe dell'utente (v4) già salvate: si tengono quelle leggibili, con id unici.
+function migrateStageList(list) {
+  const out = [];
+  const ids = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    if (!isObj(raw) || typeof raw.id !== 'string' || !raw.id || ids.has(raw.id)) continue;
+    const name = cleanStageName(raw.name) || legacyStageName(raw.id);
+    let start = isISODate(raw.start) ? raw.start : null;
+    let end = isISODate(raw.end) ? raw.end : null;
+    if (start && end && end < start) [start, end] = [end, start];
+    ids.add(raw.id);
+    out.push({ ...raw, name, start, end });
+  }
+  return out;
+}
+
+// Tappe delle versioni fino alla v3: quelle davvero usate nei dati (spese, voci, tappa attuale), in ordine di uso.
+function legacyStages(expenses, plan, current) {
+  const firstUse = new Map();
+  const note = (id, key) => {
+    if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,39}$/i.test(id)) return;
+    if (!firstUse.has(id) || key < firstUse.get(id)) firstUse.set(id, key);
+  };
+  for (const e of Array.isArray(expenses) ? expenses : []) if (isObj(e)) note(e.stage, isISODate(e.day) ? e.day : '9999');
+  for (const p of Array.isArray(plan) ? plan : []) if (isObj(p)) note(p.stage, '9999');
+  note(current, '9999');
+  return [...firstUse.entries()]
+    .map(([id, key], i) => ({ id, key, i }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.i - b.i))
+    .map(({ id }) => ({ id, name: legacyStageName(id), start: null, end: null }));
+}
+
+// Un insieme di dati (il reale o un piano): spese, voci e impostazioni proprie (budget, date, tappe, tappa attuale).
+function migrateSet(expenses, plan, s, now, report, ctx, fallbackTrip) {
+  const stages = ctx.legacy ? legacyStages(expenses, plan, s.stage) : migrateStageList(s.stages);
+  const local = { ...ctx, stageIds: new Set(stages.map((x) => x.id)) };
+  const lists = migrateLists(expenses, plan, now, report, local);
+  const trip = isValidTrip(s.trip) ? { start: s.trip.start, end: s.trip.end } : fallbackTrip ? { ...fallbackTrip } : null;
   return {
-    ...s,
-    budget: migrateBudget(s.budget),
-    stage: stageById(s.stage) ? s.stage : STAGES[0].id,
-    trip: isValidTrip(s.trip) ? { start: s.trip.start, end: s.trip.end } : { ...defaultTrip },
+    ...lists,
+    settings: {
+      ...s,
+      budget: migrateBudget(s.budget, local),
+      trip,
+      stages,
+      stage: local.stageIds.has(s.stage) ? s.stage : null,
+    },
   };
 }
 
 export function migrateData({ schema, expenses, settings, plan, scenarios } = {}, now = Date.now()) {
   const fromSchema = Number(schema) >= 1 ? Number(schema) : expenses || settings ? 1 : 0;
   const report = { from: fromSchema, to: SCHEMA_VERSION, expenses: 0, plan: 0, scenarios: 0, dropped: 0 };
-
-  const real = migrateLists(expenses, plan, now, report);
+  const legacy = fromSchema >= 1 && fromSchema < 4;
 
   const s = isObj(settings) ? settings : {};
-  let rate = isObj(s.rate) ? { ...s.rate } : null;
-  // Le prime versioni di prova salvavano un tasso indicativo: non è un tasso vero.
-  if (!rate || rate.source === 'default' || !(toNum(rate.thbPerEur) > 0)) rate = { ...NO_RATE, mode: 'auto', fetchedAt: 0 };
-  else rate.thbPerEur = toNum(rate.thbPerEur);
+  const currencies = legacy
+    ? { ...LEGACY_CURRENCIES }
+    : isValidCurrencies(s.currencies) ? { local: s.currencies.local, home: s.currencies.home } : null;
+  const ctx = { legacy, currencies };
 
+  // Tasso: nei dati vecchi era il tasso della coppia fissa; le prime versioni di prova salvavano un tasso
+  // indicativo, che non è un tasso vero.
+  let rate = { ...NO_RATE, mode: 'auto', fetchedAt: 0 };
+  if (isObj(s.rate) && s.rate.source !== 'default') {
+    const { [LEGACY_RATE_FIELD]: legacyValue, ...r } = s.rate;
+    const value = toNum(legacy ? legacyValue ?? r.value : r.value);
+    const pair = legacy ? pairOf(LEGACY_CURRENCIES) : r.pair;
+    if (value > 0 && currencies && pair === pairOf(currencies)) rate = { ...r, value, pair };
+  }
+
+  const real = migrateSet(expenses, plan, s, now, report, ctx, null);
+  const inputs = currencies ? [currencies.local, currencies.home] : [];
   const outSettings = {
-    ...migrateOwnSettings(s, DEFAULT_TRIP),
-    inputCurrency: s.inputCurrency === 'EUR' ? 'EUR' : 'THB',
+    ...real.settings,
+    currencies,
     rate,
+    inputCurrency: legacy
+      ? (s.inputCurrency === LEGACY_CURRENCIES.home ? LEGACY_CURRENCIES.home : LEGACY_CURRENCIES.local)
+      : inputs.includes(s.inputCurrency) ? s.inputCurrency : currencies ? currencies.local : null,
+    tripName: cleanText(s.tripName),
+    destination: cleanText(s.destination),
   };
 
   // Piani: ognuno con i suoi dati; un piano illeggibile si conta tra le righe scartate.
@@ -734,16 +1043,14 @@ export function migrateData({ schema, expenses, settings, plan, scenarios } = {}
     let id = typeof raw.id === 'string' && raw.id ? raw.id : newId();
     while (ids.has(id)) id += '-' + Math.random().toString(36).slice(2, 5);
     ids.add(id);
-    const lists = migrateLists(raw.expenses, raw.plan, now, report);
+    const set = migrateSet(raw.expenses, raw.plan, isObj(raw.settings) ? raw.settings : {}, now, report, ctx, outSettings.trip);
     const created = toNum(raw.createdAt);
     outScenarios.push({
       ...raw,
       id,
       name: cleanScenarioName(raw.name) || nextScenarioName(outScenarios),
       createdAt: created > 0 ? created : now,
-      expenses: lists.expenses,
-      plan: lists.plan,
-      settings: migrateOwnSettings(isObj(raw.settings) ? raw.settings : {}, outSettings.trip),
+      ...set,
     });
   }
 

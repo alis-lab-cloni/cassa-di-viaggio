@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.frankfurter.dev https://open.er-api.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Cassa di viaggio</title>
-  <meta name="description" content="Le spese del viaggio in Thailandia, in baht ed euro. I dati restano sul telefono.">
+  <meta name="description" content="Le spese di ogni viaggio, nella valuta del posto e in quella di casa. I dati restano sul telefono.">
   <meta name="theme-color" content="#f6f6f3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -30,6 +30,41 @@
     <symbol id="i-altro" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18" cy="12" r="1.3" fill="currentColor"/></symbol>
   </svg>
 
+  <!-- ===== CONFIGURAZIONE GUIDATA (primo avvio) ===== -->
+  <section id="setup" class="setup" aria-label="Il tuo viaggio" hidden>
+    <form id="setup-form" class="setup-form" novalidate>
+      <h2>Il tuo viaggio</h2>
+      <p id="setup-intro" class="hint"></p>
+      <label class="field">Nome del viaggio, facoltativo
+        <input id="setup-name" type="text" maxlength="60" autocomplete="off" placeholder="es. Vacanze d'estate">
+      </label>
+      <label class="field">Destinazione, facoltativa
+        <input id="setup-dest" type="text" maxlength="60" autocomplete="off" placeholder="Paese, regione o città">
+      </label>
+      <div class="two">
+        <label class="field">Valuta locale
+          <select id="setup-local" required></select>
+        </label>
+        <label class="field">Valuta di casa
+          <select id="setup-home" required></select>
+        </label>
+      </div>
+      <p id="setup-cur-note" class="hint" hidden>Le valute restano quelle delle spese già salvate.</p>
+      <div class="date-form">
+        <label>Partenza <input id="setup-start" type="date" required></label>
+        <label>Ritorno <input id="setup-end" type="date" required></label>
+      </div>
+      <label id="setup-budget-label" class="field" for="setup-budget">Budget al giorno, facoltativo</label>
+      <div class="inline-form">
+        <input id="setup-budget" type="text" inputmode="decimal" autocomplete="off" placeholder="Importo" aria-labelledby="setup-budget-label">
+        <div id="setup-budget-cur" class="seg" role="radiogroup" aria-label="Valuta del budget"></div>
+      </div>
+      <p class="hint">Le tappe (città o luoghi, con le date) le aggiungi quando vuoi da Impostazioni › Tappe, anche nessuna.</p>
+      <p id="setup-msg" class="hint"></p>
+      <button type="submit" id="setup-go" class="btn primary wide-btn">Inizia</button>
+    </form>
+  </section>
+
   <div class="app">
     <!-- Fascia della modalità Pianificazione: sempre visibile quando si lavora su un piano -->
     <div id="mode-band" class="mode-band" role="status" hidden>
@@ -39,19 +74,19 @@
 
     <!-- ===== OGGI (schermata principale) ===== -->
     <main id="view-home" class="view active" aria-label="Oggi">
-      <div id="stages" class="stages" role="radiogroup" aria-label="Tappa attuale"></div>
+      <div id="stages" class="stages" role="radiogroup" aria-label="Tappa attuale" hidden></div>
 
       <section id="budget-card" class="budget-card" aria-live="polite">
         <div class="budget-row">
           <div class="spent">
             <div id="spent-label" class="label">Speso oggi</div>
-            <div id="spent-thb" class="big">฿0</div>
-            <div id="spent-eur" class="small">€0,00</div>
+            <div id="spent-local" class="big"></div>
+            <div id="spent-home" class="small"></div>
           </div>
           <div class="remaining">
             <div id="remaining-label" class="label">Restano oggi</div>
-            <div id="remaining-thb" class="big">–</div>
-            <div id="remaining-eur" class="small"></div>
+            <div id="remaining-local" class="big">–</div>
+            <div id="remaining-home" class="small"></div>
           </div>
         </div>
         <div class="bar" role="progressbar" aria-label="Budget di oggi" aria-valuemin="0" aria-valuemax="100" id="bar">
@@ -66,7 +101,7 @@
 
       <section class="entry">
         <div class="amount-row">
-          <button id="cur-toggle" class="cur-toggle" type="button" aria-label="Cambia valuta">฿</button>
+          <button id="cur-toggle" class="cur-toggle" type="button" aria-label="Cambia valuta"></button>
           <label id="day-chip" class="day-chip">
             <svg class="ic" aria-hidden="true"><use href="#i-giorno"></use></svg><span id="day-chip-text">Oggi</span>
             <input id="entry-day" type="date" aria-label="Giorno della spesa">
@@ -104,7 +139,7 @@
 
     <!-- ===== VIAGGIO (budget dell'intero viaggio) ===== -->
     <section id="view-trip" class="view page" aria-label="Viaggio">
-      <header class="page-head"><h2>Viaggio</h2><p id="trip-dates" class="hint"></p></header>
+      <header class="page-head"><h2 id="trip-title">Viaggio</h2><p id="trip-dates" class="hint"></p></header>
       <div id="trip-summary" class="card"></div>
       <div class="card">
         <div class="card-head">
@@ -141,16 +176,32 @@
     <!-- ===== IMPOSTAZIONI ===== -->
     <section id="view-settings" class="view page" aria-label="Impostazioni">
       <header class="page-head"><h2>Impostazioni</h2></header>
-      <p id="settings-plan-note" class="plan-note" hidden>Budget del giorno e date del viaggio qui sotto valgono solo per il piano «<span id="settings-plan-name"></span>». Cambio e copia di sicurezza sono comuni.</p>
+      <p id="settings-plan-note" class="plan-note" hidden>Budget del giorno, date e tappe qui sotto valgono solo per il piano «<span id="settings-plan-name"></span>». Nome, valute, cambio e copia di sicurezza sono comuni.</p>
+
+      <div class="card">
+        <h3>Il viaggio</h3>
+        <form id="info-form" class="stack-form">
+          <label class="field">Nome
+            <input id="info-name" type="text" maxlength="60" autocomplete="off" placeholder="Facoltativo">
+          </label>
+          <label class="field">Destinazione
+            <input id="info-dest" type="text" maxlength="60" autocomplete="off" placeholder="Facoltativa">
+          </label>
+          <div class="two">
+            <label class="field">Valuta locale <select id="info-local"></select></label>
+            <label class="field">Valuta di casa <select id="info-home"></select></label>
+          </div>
+          <p id="info-cur-note" class="hint"></p>
+          <button type="submit" class="btn">Salva</button>
+        </form>
+        <p id="info-msg" class="hint"></p>
+      </div>
 
       <div class="card">
         <h3>Budget del giorno</h3>
         <form id="budget-form" class="inline-form">
-          <input id="budget-input" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 2000" aria-label="Budget giornaliero">
-          <div class="seg" role="radiogroup" aria-label="Valuta del budget">
-            <button type="button" data-cur="THB" class="on">฿</button>
-            <button type="button" data-cur="EUR">€</button>
-          </div>
+          <input id="budget-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Importo" aria-label="Budget giornaliero">
+          <div id="budget-cur" class="seg" role="radiogroup" aria-label="Valuta del budget"></div>
           <button type="submit" class="btn primary">Salva</button>
         </form>
         <p id="budget-hint" class="hint"></p>
@@ -167,15 +218,33 @@
       </div>
 
       <div class="card">
+        <h3>Tappe</h3>
+        <p class="hint">Le città o i luoghi del viaggio, con le date se le sai. Nella schermata Oggi la tappa si cambia con un tocco; con le date si sceglie da sola giorno per giorno.</p>
+        <div id="stage-list" class="stage-list"></div>
+        <form id="stage-form" class="stack-form" novalidate>
+          <input id="stage-name" type="text" maxlength="40" autocomplete="off" placeholder="Nome della tappa" aria-label="Nome della tappa">
+          <div class="date-form">
+            <label>Dal (facoltativo) <input id="stage-start" type="date"></label>
+            <label>Al (facoltativo) <input id="stage-end" type="date"></label>
+          </div>
+          <div class="row-btns">
+            <button type="submit" id="stage-save" class="btn primary">Aggiungi tappa</button>
+            <button type="button" id="stage-cancel" class="btn" hidden>Annulla</button>
+          </div>
+        </form>
+        <p id="stage-msg" class="hint"></p>
+      </div>
+
+      <div id="rate-card" class="card">
         <h3>Cambio</h3>
         <p id="rate-info" class="rate-info"></p>
         <div class="row-btns">
           <button id="rate-refresh" type="button" class="btn">Aggiorna ora</button>
         </div>
         <form id="rate-form" class="inline-form">
-          <label for="rate-input" class="inline-label">1 € =</label>
-          <input id="rate-input" type="text" inputmode="decimal" autocomplete="off" placeholder="37,50" aria-label="Baht per un euro">
-          <span class="inline-label">฿</span>
+          <label for="rate-input" id="rate-home-label" class="inline-label"></label>
+          <input id="rate-input" type="text" inputmode="decimal" autocomplete="off">
+          <span id="rate-local-label" class="inline-label"></span>
           <button type="submit" class="btn">Correggi</button>
         </form>
         <p id="rate-msg" class="hint"></p>
@@ -234,7 +303,7 @@
       <label class="field day-field">Giorno della spesa
         <input id="edit-day" type="date" required>
       </label>
-      <p class="hint">Tocca un'altra categoria o tappa per cambiarla subito.</p>
+      <p id="edit-hint" class="hint"></p>
       <div id="edit-cats" class="cats small-cats" role="radiogroup" aria-label="Categoria"></div>
       <div id="edit-stages" class="stages" role="radiogroup" aria-label="Tappa"></div>
       <div class="sheet-btns">
@@ -249,15 +318,12 @@
     <form id="plan-form" class="sheet" role="dialog" aria-modal="true" aria-labelledby="plan-title" novalidate>
       <h3 id="plan-title">Nuova voce del viaggio</h3>
       <div id="plan-kinds" class="chips" role="radiogroup" aria-label="Tipo"></div>
-      <input id="plan-label" type="text" maxlength="80" autocomplete="off" placeholder="Descrizione (es. Roma–Bangkok)" aria-label="Descrizione">
+      <input id="plan-label" type="text" maxlength="80" autocomplete="off" placeholder="Descrizione (es. andata e ritorno)" aria-label="Descrizione">
       <div class="inline-form">
         <input id="plan-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Importo" aria-label="Importo">
-        <div id="plan-cur" class="seg" role="radiogroup" aria-label="Valuta">
-          <button type="button" data-cur="EUR" class="on">€</button>
-          <button type="button" data-cur="THB">฿</button>
-        </div>
+        <div id="plan-cur" class="seg" role="radiogroup" aria-label="Valuta"></div>
       </div>
-      <label class="field">Tappa
+      <label id="plan-stage-field" class="field">Tappa
         <select id="plan-stage"></select>
       </label>
       <div id="plan-paid" class="seg wide" role="radiogroup" aria-label="Stato">

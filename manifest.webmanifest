@@ -1,7 +1,7 @@
 {
   "name": "Cassa di viaggio",
   "short_name": "Cassa",
-  "description": "Le spese del viaggio in Thailandia, in baht ed euro. I dati restano sul telefono.",
+  "description": "Le spese di ogni viaggio, nella valuta del posto e in quella di casa. I dati restano sul telefono.",
   "lang": "it",
   "id": "./",
   "start_url": "./",
