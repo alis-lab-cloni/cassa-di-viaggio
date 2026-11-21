@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.frankfurter.dev https://open.er-api.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cassa di viaggio</title>
+  <meta name="description" content="Le spese del viaggio in Thailandia, in baht ed euro. I dati restano sul telefono.">
+  <meta name="theme-color" content="#f6f6f3">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Cassa">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-view="home">
+  <!-- Icone delle categorie (linee semplici, un colore) -->
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-cibo" viewBox="0 0 24 24"><path d="M6 3v6a2 2 0 0 0 4 0V3M8 11v10M17 3c-2.2 2-2.2 7 0 9v9"/></symbol>
+    <symbol id="i-trasporti" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="13" rx="2"/><path d="M4 11h16M8 17v3M16 17v3"/></symbol>
+    <symbol id="i-alloggio" viewBox="0 0 24 24"><path d="M3 19V6M3 15h18v4M21 15v-3a3 3 0 0 0-3-3h-7v6"/><circle cx="7" cy="11.5" r="1.6"/></symbol>
+    <symbol id="i-attivita" viewBox="0 0 24 24"><path d="M4 7h16v3a2 2 0 0 0 0 4v3H4v-3a2 2 0 0 0 0-4zM14 7v10"/></symbol>
+    <symbol id="i-spesa" viewBox="0 0 24 24"><path d="M5 8h14l-1 12H6zM9 8V6.5a3 3 0 0 1 6 0V8"/></symbol>
+    <symbol id="i-massaggi" viewBox="0 0 24 24"><path d="M5 19c0-8 6-13 14-14 0 8-5 14-14 14zM5 19l7-7"/></symbol>
+    <symbol id="i-giorno" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></symbol>
+    <symbol id="i-altro" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18" cy="12" r="1.3" fill="currentColor"/></symbol>
+  </svg>
+
+  <div class="app">
+    <!-- Fascia della modalità Pianificazione: sempre visibile quando si lavora su un piano -->
+    <div id="mode-band" class="mode-band" role="status" hidden>
+      <span class="mode-text"><span class="mode-tag">Piano</span> <span id="mode-name"></span></span>
+      <button id="mode-exit" type="button">Torna al reale</button>
+    </div>
+
+    <!-- ===== OGGI (schermata principale) ===== -->
+    <main id="view-home" class="view active" aria-label="Oggi">
+      <div id="stages" class="stages" role="radiogroup" aria-label="Tappa attuale"></div>
+
+      <section id="budget-card" class="budget-card" aria-live="polite">
+        <div class="budget-row">
+          <div class="spent">
+            <div id="spent-label" class="label">Speso oggi</div>
+            <div id="spent-thb" class="big">฿0</div>
+            <div id="spent-eur" class="small">€0,00</div>
+          </div>
+          <div class="remaining">
+            <div id="remaining-label" class="label">Restano oggi</div>
+            <div id="remaining-thb" class="big">–</div>
+            <div id="remaining-eur" class="small"></div>
+          </div>
+        </div>
+        <div class="bar" role="progressbar" aria-label="Budget di oggi" aria-valuemin="0" aria-valuemax="100" id="bar">
+          <div id="bar-fill" class="bar-fill"></div>
+        </div>
+        <div class="budget-foot">
+          <button id="rate-chip" class="rate-chip" type="button" aria-label="Tasso di cambio"></button>
+          <button id="plan-tag" class="plan-tag" type="button" hidden><span class="mode-tag">Piano</span> <span id="plan-tag-name"></span></button>
+          <button id="last-expense" class="last-expense" type="button" hidden></button>
+        </div>
+      </section>
+
+      <section class="entry">
+        <div class="amount-row">
+          <button id="cur-toggle" class="cur-toggle" type="button" aria-label="Cambia valuta">฿</button>
+          <label id="day-chip" class="day-chip">
+            <svg class="ic" aria-hidden="true"><use href="#i-giorno"></use></svg><span id="day-chip-text">Oggi</span>
+            <input id="entry-day" type="date" aria-label="Giorno della spesa">
+          </label>
+          <div class="amount-box">
+            <output id="amount" class="amount placeholder">0</output>
+            <div id="amount-conv" class="amount-conv">&nbsp;</div>
+          </div>
+          <button id="amount-clear" class="amount-clear" type="button" aria-label="Azzera l'importo" hidden>×</button>
+          <button id="fix-cancel" class="fix-cancel" type="button" hidden>Annulla</button>
+        </div>
+
+        <div id="quick" class="quick" aria-label="Importi rapidi"></div>
+
+        <div class="keypad" id="keypad">
+          <button type="button" data-k="1">1</button>
+          <button type="button" data-k="2">2</button>
+          <button type="button" data-k="3">3</button>
+          <button type="button" data-k="4">4</button>
+          <button type="button" data-k="5">5</button>
+          <button type="button" data-k="6">6</button>
+          <button type="button" data-k="7">7</button>
+          <button type="button" data-k="8">8</button>
+          <button type="button" data-k="9">9</button>
+          <button type="button" data-k=",">,</button>
+          <button type="button" data-k="0">0</button>
+          <button type="button" data-k="back" class="fn" aria-label="Cancella una cifra">⌫</button>
+        </div>
+
+        <div id="cats" class="cats" role="radiogroup" aria-label="Categoria"></div>
+
+        <button type="button" id="done" class="add-btn">Aggiungi spesa</button>
+      </section>
+    </main>
+
+    <!-- ===== VIAGGIO (budget dell'intero viaggio) ===== -->
+    <section id="view-trip" class="view page" aria-label="Viaggio">
+      <header class="page-head"><h2>Viaggio</h2><p id="trip-dates" class="hint"></p></header>
+      <div id="trip-summary" class="card"></div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Voli, alloggi e spostamenti</h3>
+          <button id="plan-add" type="button" class="btn primary">Aggiungi voce</button>
+        </div>
+        <p class="hint">Previsti o già pagati. Tocca «Da pagare» quando li paghi.</p>
+        <div id="plan-list"></div>
+      </div>
+      <div id="scenarios-card" class="card">
+        <h3>Pianificazione</h3>
+        <p id="scenarios-hint" class="hint"></p>
+        <div id="scenario-list" class="scenario-list" role="radiogroup" aria-label="Piani"></div>
+        <form id="scenario-edit" class="inline-form" hidden>
+          <input id="scenario-name" type="text" maxlength="40" autocomplete="off" aria-label="Nome del piano">
+          <button type="submit" class="btn">Rinomina</button>
+        </form>
+        <div class="row-btns">
+          <button id="scenario-new" type="button" class="btn">Nuovo piano</button>
+          <button id="scenario-copy" type="button" class="btn">Copia dal reale</button>
+          <button id="scenario-delete" type="button" class="btn danger plan-only">Elimina piano</button>
+        </div>
+        <button id="scenario-exit" type="button" class="btn primary wide-btn" hidden>Torna al reale</button>
+        <p id="scenario-msg" class="hint"></p>
+      </div>
+    </section>
+
+    <!-- ===== RIEPILOGO ===== -->
+    <section id="view-summary" class="view page" aria-label="Riepilogo">
+      <header class="page-head"><h2>Riepilogo</h2></header>
+      <div id="summary"></div>
+    </section>
+
+    <!-- ===== IMPOSTAZIONI ===== -->
+    <section id="view-settings" class="view page" aria-label="Impostazioni">
+      <header class="page-head"><h2>Impostazioni</h2></header>
+      <p id="settings-plan-note" class="plan-note" hidden>Budget del giorno e date del viaggio qui sotto valgono solo per il piano «<span id="settings-plan-name"></span>». Cambio e copia di sicurezza sono comuni.</p>
+
+      <div class="card">
+        <h3>Budget del giorno</h3>
+        <form id="budget-form" class="inline-form">
+          <input id="budget-input" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 2000" aria-label="Budget giornaliero">
+          <div class="seg" role="radiogroup" aria-label="Valuta del budget">
+            <button type="button" data-cur="THB" class="on">฿</button>
+            <button type="button" data-cur="EUR">€</button>
+          </div>
+          <button type="submit" class="btn primary">Salva</button>
+        </form>
+        <p id="budget-hint" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>Date del viaggio</h3>
+        <form id="trip-form" class="date-form">
+          <label>Partenza <input id="trip-start" type="date" required></label>
+          <label>Ritorno <input id="trip-end" type="date" required></label>
+          <button type="submit" class="btn">Salva</button>
+        </form>
+        <p id="trip-msg" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>Cambio</h3>
+        <p id="rate-info" class="rate-info"></p>
+        <div class="row-btns">
+          <button id="rate-refresh" type="button" class="btn">Aggiorna ora</button>
+        </div>
+        <form id="rate-form" class="inline-form">
+          <label for="rate-input" class="inline-label">1 € =</label>
+          <input id="rate-input" type="text" inputmode="decimal" autocomplete="off" placeholder="37,50" aria-label="Baht per un euro">
+          <span class="inline-label">฿</span>
+          <button type="submit" class="btn">Correggi</button>
+        </form>
+        <p id="rate-msg" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>Copia di sicurezza</h3>
+        <p class="hint">Scarica spese e voci del viaggio in un file CSV (si apre con Excel o Numbers). Ci sono anche i piani, segnati nelle colonne «modalita» e «piano».</p>
+        <button id="export" type="button" class="btn primary">Esporta CSV</button>
+        <p id="export-msg" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>Installa sul telefono</h3>
+        <p class="install"><b>iPhone (Safari):</b><br>
+          1. Apri il link in Safari.<br>
+          2. Tocca Condividi (il quadrato con la freccia).<br>
+          3. Scegli «Aggiungi alla schermata Home» e poi «Aggiungi».</p>
+        <p class="install"><b>Android (Chrome):</b><br>
+          1. Apri il link in Chrome.<br>
+          2. Tocca il menu ⋮ in alto a destra.<br>
+          3. Scegli «Installa app» (o «Aggiungi a schermata Home»).</p>
+        <p class="hint">Installala prima di iniziare a usarla: su iPhone le spese fatte in Safari e quelle nell'app installata sono separate.</p>
+        <button id="install-btn" type="button" class="btn" hidden>Installa ora</button>
+      </div>
+
+      <div id="wipe-card" class="card">
+        <h3>I tuoi dati</h3>
+        <p class="hint">Le spese restano solo su questo telefono: niente account, niente server. L'app si collega a internet solo per leggere il cambio del giorno, senza inviare i tuoi dati.</p>
+        <button id="wipe" type="button" class="btn danger">Cancella tutte le spese</button>
+      </div>
+      <p class="version" id="version"></p>
+    </section>
+
+    <!-- ===== BARRA IN BASSO ===== -->
+    <nav class="tabs" aria-label="Sezioni">
+      <button type="button" data-view="home" class="on">Oggi</button>
+      <button type="button" data-view="trip">Viaggio</button>
+      <button type="button" data-view="summary">Riepilogo</button>
+      <button type="button" data-view="settings">Impostazioni</button>
+    </nav>
+  </div>
+
+  <!-- Avviso con «Annulla» -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span id="toast-text"></span>
+    <button id="toast-undo" type="button">Annulla</button>
+  </div>
+
+  <!-- Modifica spesa -->
+  <div id="sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <h3 id="sheet-title">Modifica spesa</h3>
+      <p id="sheet-when" class="hint"></p>
+      <button id="edit-amount" type="button" class="edit-amount" aria-label="Correggi l'importo"></button>
+      <label class="field day-field">Giorno della spesa
+        <input id="edit-day" type="date" required>
+      </label>
+      <p class="hint">Tocca un'altra categoria o tappa per cambiarla subito.</p>
+      <div id="edit-cats" class="cats small-cats" role="radiogroup" aria-label="Categoria"></div>
+      <div id="edit-stages" class="stages" role="radiogroup" aria-label="Tappa"></div>
+      <div class="sheet-btns">
+        <button id="edit-delete" type="button" class="btn danger">Elimina</button>
+        <button id="edit-close" type="button" class="btn">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Voce del viaggio (volo, alloggio, spostamento) -->
+  <div id="plan-sheet" class="sheet-backdrop" hidden>
+    <form id="plan-form" class="sheet" role="dialog" aria-modal="true" aria-labelledby="plan-title" novalidate>
+      <h3 id="plan-title">Nuova voce del viaggio</h3>
+      <div id="plan-kinds" class="chips" role="radiogroup" aria-label="Tipo"></div>
+      <input id="plan-label" type="text" maxlength="80" autocomplete="off" placeholder="Descrizione (es. Roma–Bangkok)" aria-label="Descrizione">
+      <div class="inline-form">
+        <input id="plan-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Importo" aria-label="Importo">
+        <div id="plan-cur" class="seg" role="radiogroup" aria-label="Valuta">
+          <button type="button" data-cur="EUR" class="on">€</button>
+          <button type="button" data-cur="THB">฿</button>
+        </div>
+      </div>
+      <label class="field">Tappa
+        <select id="plan-stage"></select>
+      </label>
+      <div id="plan-paid" class="seg wide" role="radiogroup" aria-label="Stato">
+        <button type="button" data-paid="0" class="on">Da pagare</button>
+        <button type="button" data-paid="1">Già pagato</button>
+      </div>
+      <p id="plan-msg" class="hint"></p>
+      <div class="sheet-btns three">
+        <button id="plan-delete" type="button" class="btn danger" hidden>Elimina</button>
+        <button id="plan-cancel" type="button" class="btn">Chiudi</button>
+        <button id="plan-save" type="submit" class="btn primary">Salva</button>
+      </div>
+    </form>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
