@@ -442,6 +442,8 @@ input, select { font: inherit; color: inherit; }
 }
 .plan-main .t { min-width: 0; overflow-wrap: anywhere; }
 .plan-main .sub { color: var(--muted); font-size: 13px; }
+/* destinazione da indicare (più tappe, nessuna scelta) */
+.no-dest { color: #8a5a14; }
 .plan-main .v { text-align: right; font-weight: 600; white-space: nowrap; }
 .plan-main .v small { display: block; color: var(--muted); font-weight: 500; font-size: 12px; }
 .pill {

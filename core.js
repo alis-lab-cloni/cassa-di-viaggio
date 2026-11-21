@@ -12,6 +12,10 @@ export const CATEGORIES = [
 ];
 
 export const NO_STAGE_LABEL = 'Senza tappa';
+// Avviso per una spesa o voce senza tappa quando il viaggio ha più tappe tra cui scegliere.
+export const NO_DEST_LABEL = 'Destinazione non indicata';
+// Riga del riepilogo senza tappe né destinazione del viaggio.
+export const WHOLE_TRIP_LABEL = 'Tutto il viaggio';
 
 // Voci del budget del viaggio: voli, alloggi e spostamenti interni.
 export const PLAN_GROUPS = [
@@ -203,6 +207,35 @@ export function stageById(stages, id) {
 export function stageLabel(stages, id) {
   const s = stageById(stages, id);
   return s ? s.name : NO_STAGE_LABEL;
+}
+
+// Destinazione di una spesa o voce, come la mostrano Viaggio e Riepilogo. `missing` = avviso da mostrare.
+// - con la sua tappa: il nome della tappa;
+// - una sola tappa nel viaggio: quella (le righe si assegnano da sole, vedi assignSingleStage);
+// - nessuna tappa: la destinazione del viaggio, se c'è; non c'è niente da scegliere, quindi nessun avviso;
+// - più tappe e nessuna scelta (o tappa eliminata): «Destinazione non indicata», perché si può indicare.
+export function destinationOf(stages, id, tripDestination = '') {
+  const s = stageById(stages, id);
+  if (s) return { label: s.name, missing: false };
+  if (stages.length === 1) return { label: stages[0].name, missing: false };
+  if (!stages.length) return { label: tripDestination || '', missing: false };
+  return { label: NO_DEST_LABEL, missing: true };
+}
+
+// Con una sola tappa ogni spesa o voce senza tappa (o con una tappa eliminata) va su quella.
+// Restituisce liste nuove solo se cambia qualcosa; `count` = righe assegnate.
+export function assignSingleStage(expenses, plan, stages) {
+  if (stages.length !== 1) return { expenses, plan, count: 0 };
+  const id = stages[0].id;
+  let count = 0;
+  const fix = (r) => {
+    if (r.stage === id) return r;
+    count += 1;
+    return { ...r, stage: id };
+  };
+  const e = expenses.map(fix);
+  const p = plan.map(fix);
+  return count ? { expenses: e, plan: p, count } : { expenses, plan, count: 0 };
 }
 
 // La tappa i cui giorni comprendono `day` (la prima, se si sovrappongono).
@@ -414,12 +447,14 @@ export function totalsByCategory(expenses, fx) {
 }
 
 // Per tappa, nell'ordine del viaggio: spese del giorno più voci del viaggio già pagate con quella tappa.
-// Le righe senza tappa (o con una tappa eliminata) finiscono in «Senza tappa», in fondo.
-export function totalsByStage(expenses, plan, fx, stages = []) {
+// Le righe senza tappa (o con una tappa eliminata) finiscono in fondo, con l'etichetta di destinationOf:
+// «Destinazione non indicata» con più tappe, la destinazione del viaggio (o «Tutto il viaggio») senza tappe.
+// Con una sola tappa tutto va su quella.
+export function totalsByStage(expenses, plan, fx, stages = [], tripDestination = '') {
   const ordered = sortStages(stages);
   const keys = [...ordered.map((s) => s.id), null];
   const map = new Map(keys.map((k) => [k, { count: 0, dailyLocal: 0, dailyHome: 0, planLocal: 0, planHome: 0 }]));
-  const key = (id) => (stageById(stages, id) ? id : null);
+  const key = (id) => (stageById(stages, id) ? id : stages.length === 1 ? stages[0].id : null);
   for (const e of expenses) {
     const r = map.get(key(e.stage));
     const v = expenseValue(e, fx);
@@ -438,7 +473,8 @@ export function totalsByStage(expenses, plan, fx, stages = []) {
   return keys
     .map((k) => {
       const r = map.get(k);
-      return { id: k, label: stageLabel(stages, k), ...r, local: r.dailyLocal + r.planLocal, home: r.dailyHome + r.planHome };
+      const d = destinationOf(stages, k, tripDestination);
+      return { id: k, label: d.label || WHOLE_TRIP_LABEL, missing: d.missing, ...r, local: r.dailyLocal + r.planLocal, home: r.dailyHome + r.planHome };
     })
     .filter((r) => r.count > 0);
 }

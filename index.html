@@ -323,9 +323,11 @@
         <input id="plan-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="Importo" aria-label="Importo">
         <div id="plan-cur" class="seg" role="radiogroup" aria-label="Valuta"></div>
       </div>
-      <label id="plan-stage-field" class="field">Tappa
+      <label id="plan-stage-field" class="field">Destinazione (tappa)
         <select id="plan-stage"></select>
       </label>
+      <input id="plan-stage-new" type="text" maxlength="40" autocomplete="off" placeholder="Nome della destinazione" aria-label="Nuova destinazione" hidden>
+      <p id="plan-stage-hint" class="hint" hidden></p>
       <div id="plan-paid" class="seg wide" role="radiogroup" aria-label="Stato">
         <button type="button" data-paid="0" class="on">Da pagare</button>
         <button type="button" data-paid="1">Già pagato</button>

@@ -1,6 +1,6 @@
 import {
-  CATEGORIES, PLAN_KINDS, SCHEMA_VERSION, LEVEL_TEXT, NO_RATE, NO_STAGE_LABEL, fillMissingRate, categoryById,
-  stageById, stageLabel, sortStages, stageOfDay, stageDates, makeStage, cleanStageName, planKindById, convert,
+  CATEGORIES, PLAN_KINDS, SCHEMA_VERSION, LEVEL_TEXT, NO_RATE, NO_DEST_LABEL, WHOLE_TRIP_LABEL, fillMissingRate, categoryById,
+  stageById, stageLabel, destinationOf, assignSingleStage, sortStages, stageOfDay, stageDates, makeStage, cleanStageName, planKindById, convert,
   expenseValue, planValue, currentRate, pairOf, isValidCurrencies, currencyOptions, currencyName, dayKey, addDays,
   makeExpense, makePlanItem, setPlanPaid, keypadInput, parseAmount, parseDecimal, quickAmounts, dayBudget, spentIn,
   budgetStatus, expensesOfDay, totals, totalsByCategory, totalsByStage, dailySummary, tripSummary, daysBetween,
@@ -9,7 +9,7 @@ import {
   formatKeypad, amountToInput, isISODate, makeScenario, nextScenarioName, cleanScenarioName, needsSetup, cleanText,
 } from './core.js';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const KEY = {
   schema: 'cdv.schema',
   expenses: 'cdv.expenses',
@@ -134,7 +134,18 @@ Object.defineProperties(state, {
   plan: { get: () => active().plan, set: (v) => { active().plan = v; } },
 });
 
-if (data.migrated || data.report.dropped) save();
+// Con una sola tappa le spese e voci senza tappa vanno su quella (anche quelle salvate dalle versioni precedenti).
+function assignSingle(set) {
+  const r = assignSingleStage(set.expenses, set.plan, set.settings.stages);
+  if (r.count) {
+    set.expenses = r.expenses;
+    set.plan = r.plan;
+  }
+  return r.count;
+}
+const singleAssigned = [state.real, ...state.scenarios].reduce((n, set) => n + assignSingle(set), 0);
+
+if (data.migrated || data.report.dropped || singleAssigned) save();
 
 // Configurazione completa (valute e date): finché manca si mostra la configurazione guidata.
 const ready = () => !needsSetup(state.settings);
@@ -245,6 +256,13 @@ function markRadio(container, attr, id) {
 }
 
 const markCat = (container, id) => markRadio(container, 'cat', id);
+
+// Destinazione di una spesa o voce dei dati attivi (vedi destinationOf): testo semplice o HTML con l'avviso.
+const destOf = (id) => destinationOf(stages(), id, state.settings.destination);
+function destHTML(id) {
+  const d = destOf(id);
+  return d.missing ? `<span class="no-dest">${esc(d.label)}</span>` : esc(d.label);
+}
 
 // Pulsanti per scegliere tra valuta locale e di casa (con la stessa valuta non servono).
 function renderCurSeg(container, selected) {
@@ -602,7 +620,8 @@ function addExpense() {
   vibrate(10);
   state.undo = before;
   const when = exp.day === state.today ? '' : ` · ${formatDayShort(exp.day, state.today).toLowerCase()}`;
-  const where = exp.stage ? ` · ${stageLabel(stages(), exp.stage)}` : '';
+  const dest = destOf(exp.stage).label;
+  const where = dest ? ` · ${dest}` : '';
   showToast(`${scenario() ? 'Nel piano: a' : 'A'}ggiunta ${F().money(exp.amount, exp.currency)} · ${categoryById(exp.category).label}${where}${when}`, undo);
 }
 
@@ -651,6 +670,7 @@ function undo() {
   if (!u) return;
   state.expenses = u.expenses;
   state.plan = u.plan;
+  assignSingle(active()); // una tappa creata dalla voce annullata resta: vale sempre la regola della tappa unica
   save();
   dismissToast();
   refreshAll();
@@ -679,7 +699,8 @@ function openEdit(id) {
   const when = new Date(exp.ts);
   const time = when.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
   const reg = dayKey(when) === exp.day ? `alle ${time}` : `registrata il ${formatDayMonth(dayKey(when))} alle ${time}`;
-  const where = stages().length || exp.stage ? ` · ${stageLabel(stages(), exp.stage)}` : '';
+  const dest = destOf(exp.stage).label;
+  const where = dest ? ` · ${dest}` : '';
   $('sheet-when').textContent = `${formatDay(exp.day, state.today)} · ${reg}${where}`;
   $('edit-amount').textContent = F().money(exp.amount, exp.currency);
   $('edit-day').value = exp.day;
@@ -853,7 +874,7 @@ function renderTrip() {
         const other = otherText(p.amount, p.currency, p.paid && p.rate > 0 ? p.rate : rate());
         return `<div class="plan-row${p.paid ? ' paid' : ''}">
           <button type="button" class="plan-main" data-plan-edit="${esc(p.id)}">
-            <span class="t">${esc(title)}<br><span class="sub">${esc(stageLabel(stages(), p.stage))}</span></span>
+            <span class="t">${esc(title)}${destOf(p.stage).label ? `<br><span class="sub">${destHTML(p.stage)}</span>` : ''}</span>
             <span class="v">${esc(f.money(p.amount, p.currency))}${other ? `<small>${esc(other)}</small>` : ''}</span>
           </button>
           <button type="button" class="pill" data-plan-toggle="${esc(p.id)}" aria-label="${p.paid ? 'Pagato: tocca per segnarlo da pagare' : 'Da pagare: tocca per segnarlo pagato'}">${p.paid ? 'Pagato' : 'Da pagare'}</button>
@@ -880,7 +901,8 @@ function togglePaid(id) {
   changed(before, `${planKindById(p.kind).label} ${F().money(p.amount, p.currency)}: ${next.paid ? 'pagato' : 'da pagare'}`);
 }
 
-const planForm = { kind: 'volo', cur: null, paid: false, stageTouched: false };
+const planForm = { kind: 'volo', cur: null, paid: false };
+const NEW_STAGE = '__nuova'; // «Nuova destinazione…» nell'elenco delle destinazioni della voce
 
 function openPlan(id = null) {
   const p = id ? state.plan.find((x) => x.id === id) : null;
@@ -889,12 +911,13 @@ function openPlan(id = null) {
   // un volo si paga di solito nella valuta di casa
   planForm.cur = p ? p.currency : cur().home;
   planForm.paid = p ? p.paid : false;
-  planForm.stageTouched = !!p;
   $('plan-title').textContent = p ? 'Modifica voce del viaggio' : 'Nuova voce del viaggio';
   $('plan-label').value = p ? p.label : '';
   $('plan-amount').value = p ? amountToInput(p.amount) : '';
   renderPlanStageSelect();
-  $('plan-stage').value = p ? (stageById(stages(), p.stage) ? p.stage : '') : defaultPlanStage(planForm.kind);
+  $('plan-stage').value = p ? (stageById(stages(), p.stage) ? p.stage : '') : defaultPlanStage();
+  $('plan-stage-new').value = '';
+  renderPlanStageNew();
   $('plan-delete').hidden = !p;
   $('plan-msg').textContent = '';
   $('plan-msg').className = 'hint';
@@ -903,15 +926,38 @@ function openPlan(id = null) {
   $('plan-sheet').hidden = false;
 }
 
+// La destinazione della voce si sceglie sempre, anche senza tappe o con una sola:
+// - nessuna tappa: la destinazione del viaggio (o «Tutto il viaggio») oppure una nuova;
+// - una tappa: quella oppure una nuova (non c'è «Non indicata»: con una tappa sola tutto va lì);
+// - più tappe: una delle tappe, «Non indicata» oppure una nuova.
+// Una destinazione nuova diventa una tappa del viaggio.
 function renderPlanStageSelect() {
   const list = sortStages(stages());
-  $('plan-stage-field').hidden = !list.length;
-  $('plan-stage').innerHTML = `<option value="">${NO_STAGE_LABEL}</option>` + list.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+  const options = list.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`);
+  if (!list.length) options.push(`<option value="">${esc(state.settings.destination || WHOLE_TRIP_LABEL)}</option>`);
+  if (list.length > 1) options.push('<option value="">Non indicata</option>');
+  options.push(`<option value="${NEW_STAGE}">Nuova destinazione…</option>`);
+  $('plan-stage').innerHTML = options.join('');
 }
 
-// Volo internazionale senza tappa; alloggi e spostamenti sulla tappa attuale (si cambia con un tocco).
-function defaultPlanStage(kind) {
-  return kind === 'volo' || !stageById(stages(), cfg().stage) ? '' : cfg().stage;
+// Proposta: la tappa attuale (o la prima); senza tappe la destinazione del viaggio.
+function defaultPlanStage() {
+  const list = sortStages(stages());
+  if (!list.length) return '';
+  return stageById(list, cfg().stage) ? cfg().stage : list[0].id;
+}
+
+function renderPlanStageNew() {
+  const isNew = $('plan-stage').value === NEW_STAGE;
+  $('plan-stage-new').hidden = !isNew;
+  const others = state.expenses.length + state.plan.filter((p) => p.id !== state.planEditing).length;
+  const hint = $('plan-stage-hint');
+  hint.hidden = !isNew;
+  hint.textContent = !isNew
+    ? ''
+    : stages().length || !others
+      ? 'Diventa una tappa del viaggio: la ritrovi in Impostazioni › Tappe e nella schermata Oggi.'
+      : 'Diventa la prima tappa del viaggio: con una sola tappa anche le altre spese e voci vanno su questa.';
 }
 
 function markPlanForm() {
@@ -934,10 +980,28 @@ function savePlan(ev) {
     $('plan-amount').focus();
     return;
   }
+  let stage = stageById(stages(), $('plan-stage').value) ? $('plan-stage').value : null;
+  let created = null;
+  if ($('plan-stage').value === NEW_STAGE) {
+    const name = cleanStageName($('plan-stage-new').value);
+    if (!name) {
+      $('plan-msg').textContent = 'Scrivi il nome della destinazione (una città, un luogo) o scegline una dall\'elenco.';
+      $('plan-msg').className = 'hint err';
+      $('plan-stage-new').focus();
+      return;
+    }
+    // un nome già presente non crea un doppione
+    const known = stages().find((s) => s.name.toLowerCase() === name.toLowerCase());
+    if (known) stage = known.id;
+    else {
+      created = makeStage({ name });
+      stage = created.id;
+    }
+  }
   const fields = {
     kind: planForm.kind,
     label: $('plan-label').value.trim().slice(0, 80),
-    stage: stageById(stages(), $('plan-stage').value) ? $('plan-stage').value : null,
+    stage,
     amount,
     currency: same() ? cur().local : planForm.cur,
   };
@@ -953,9 +1017,17 @@ function savePlan(ev) {
     item = makePlanItem({ ...fields, paid: planForm.paid, rate: rate() });
     state.plan.push(item);
   }
+  if (created) {
+    const c = cfg();
+    c.stages = [...c.stages, created];
+    if (!stageById(c.stages, c.stage)) c.stage = created.id;
+  }
+  assignSingle(active());
   closePlan();
   $('plan-amount').blur();
-  changed(before, `${old ? 'Voce aggiornata' : 'Voce aggiunta'}: ${planKindById(item.kind).label} ${F().money(item.amount, item.currency)}`);
+  $('plan-stage-new').blur();
+  const dest = destOf(item.stage).label;
+  changed(before, `${old ? 'Voce aggiornata' : 'Voce aggiunta'}: ${planKindById(item.kind).label} ${F().money(item.amount, item.currency)}${dest ? ` · ${dest}` : ''}${created ? ' (nuova tappa)' : ''}`);
 }
 
 function deletePlan() {
@@ -990,7 +1062,7 @@ function stageRowsHTML(rows) {
     return `
     <div class="cat-row stage-row" data-stage-row="${esc(r.id || 'nessuna')}">
       <span></span>
-      <div><div>${esc(r.label)} <span class="hint">${parts.join(' · ')}</span></div><div class="meter"><i style="width:${Math.round((r.local / max) * 100)}%"></i></div></div>
+      <div><div>${r.missing ? `<span class="no-dest">${esc(r.label)}</span>` : esc(r.label)} <span class="hint">${parts.join(' · ')}</span></div><div class="meter"><i style="width:${Math.round((r.local / max) * 100)}%"></i></div></div>
       <div class="v">${F().local(r.local)}${smallHome(r.home)}</div>
     </div>`;
   }).join('') + '</div>';
@@ -1005,7 +1077,7 @@ function renderSummary() {
   }
   const b = cfg().budget;
   const x = fx();
-  const byStage = totalsByStage(state.expenses, state.plan, x, stages());
+  const byStage = totalsByStage(state.expenses, state.plan, x, stages(), state.settings.destination);
   let html = '';
   // con le tappe (o voci già pagate) il primo riquadro è per tappa
   if (stages().length || paidPlan.length) {
@@ -1014,6 +1086,27 @@ function renderSummary() {
       <h3>${stages().length ? 'Per tappa' : 'Spese e voci pagate'}</h3>
       <p class="hint">Spese del giorno più voli, alloggi e spostamenti già pagati.</p>
       ${stageRowsHTML(byStage)}
+    </div>`;
+  }
+
+  // ogni voce pagata con la sua destinazione (tocca per correggerla); quelle da pagare sono in Viaggio
+  if (paidPlan.length) {
+    const unpaid = state.plan.length - paidPlan.length;
+    html += `
+    <div class="card" id="summary-plan">
+      <h3>Voli, alloggi e spostamenti pagati</h3>
+      ${paidPlan.map((p) => {
+        const k = planKindById(p.kind);
+        const title = p.label ? `${k.label} · ${p.label}` : k.label;
+        const other = otherText(p.amount, p.currency, p.rate > 0 ? p.rate : rate());
+        return `<div class="plan-row paid">
+          <button type="button" class="plan-main" data-plan-edit="${esc(p.id)}">
+            <span class="t">${esc(title)}${destOf(p.stage).label ? `<br><span class="sub">${destHTML(p.stage)}</span>` : ''}</span>
+            <span class="v">${esc(F().money(p.amount, p.currency))}${other ? `<small>${esc(other)}</small>` : ''}</span>
+          </button>
+        </div>`;
+      }).join('')}
+      ${unpaid ? `<p class="hint">${unpaid === 1 ? 'Una voce da pagare è' : `${unpaid} voci da pagare sono`} in Viaggio, non qui.</p>` : ''}
     </div>`;
   }
 
@@ -1049,7 +1142,7 @@ function renderSummary() {
               const c = categoryById(e.category);
               const t = new Date(e.ts).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
               const other = otherText(e.amount, e.currency, e.rate);
-              const where = e.stage || stages().length ? ` · ${esc(stageLabel(stages(), e.stage))}` : '';
+              const where = destOf(e.stage).label ? ` · ${destHTML(e.stage)}` : '';
               return `<li><button type="button" data-edit="${esc(e.id)}">
                 ${icon(c.id)}
                 <span>${esc(c.label)}<br><span class="time">${t}${where}</span></span>
@@ -1266,7 +1359,8 @@ function saveStage(ev) {
     c.stages = [...c.stages, s];
     // la prima tappa diventa quella attuale
     if (!stageById(c.stages, c.stage)) c.stage = s.id;
-    msg.textContent = `Tappa «${name}» aggiunta.`;
+    const moved = assignSingle(active());
+    msg.textContent = `Tappa «${name}» aggiunta.${moved ? ` ${moved === 1 ? 'La spesa o voce senza tappa ora è' : `Le ${moved} spese e voci senza tappa ora sono`} su «${name}».` : ''}`;
   }
   c.stageDay = null; // con date nuove la tappa del giorno si ricalcola
   msg.className = 'hint ok';
@@ -1276,16 +1370,22 @@ function saveStage(ev) {
   refreshAll();
 }
 
-// Eliminare una tappa: le sue spese e voci restano, «Senza tappa».
+// Eliminare una tappa: le sue spese e voci restano. Se ne resta una sola vanno su quella; con più tappe
+// restano da indicare; senza tappe valgono per la destinazione del viaggio.
 function deleteStage(id) {
   const c = cfg();
   const s = stageById(c.stages, id);
   if (!s) return;
   const n = active().expenses.filter((e) => e.stage === id).length + active().plan.filter((p) => p.stage === id).length;
-  if (n && !confirm(`Eliminare la tappa «${s.name}»? ${n} ${n === 1 ? 'spesa o voce resta salvata' : 'spese e voci restano salvate'}, ${n === 1 ? 'passa' : 'passano'} a «${NO_STAGE_LABEL}».`)) return;
-  c.stages = c.stages.filter((x) => x.id !== id);
+  const left = c.stages.filter((x) => x.id !== id);
+  const goes = left.length === 1
+    ? `${n === 1 ? 'passa' : 'passano'} a «${left[0].name}»`
+    : left.length ? `${n === 1 ? 'resta' : 'restano'} senza tappa («${NO_DEST_LABEL}»)` : `${n === 1 ? 'resta' : 'restano'} senza tappa`;
+  if (n && !confirm(`Eliminare la tappa «${s.name}»? ${n} ${n === 1 ? 'spesa o voce resta salvata' : 'spese e voci restano salvate'} e ${goes}.`)) return;
+  c.stages = left;
   state.expenses = state.expenses.map((e) => (e.stage === id ? { ...e, stage: null } : e));
   state.plan = state.plan.map((p) => (p.stage === id ? { ...p, stage: null } : p));
+  assignSingle(active());
   if (c.stage === id) c.stage = sortStages(c.stages)[0] ? sortStages(c.stages)[0].id : null;
   if (state.stageEditing === id) resetStageForm();
   save();
@@ -1648,7 +1748,9 @@ function init() {
 
   $('summary').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-edit]');
-    if (b) openEdit(b.dataset.edit);
+    if (b) return openEdit(b.dataset.edit);
+    const p = ev.target.closest('[data-plan-edit]');
+    if (p) openPlan(p.dataset.planEdit);
   });
 
   $('entry-day').addEventListener('change', (ev) => pickEntryDay(ev.target.value));
@@ -1680,10 +1782,12 @@ function init() {
     const b = ev.target.closest('[data-kind]');
     if (!b) return;
     planForm.kind = b.dataset.kind;
-    if (!planForm.stageTouched) $('plan-stage').value = defaultPlanStage(planForm.kind);
     markPlanForm();
   });
-  $('plan-stage').addEventListener('change', () => { planForm.stageTouched = true; });
+  $('plan-stage').addEventListener('change', () => {
+    renderPlanStageNew();
+    if ($('plan-stage').value === NEW_STAGE) $('plan-stage-new').focus();
+  });
   $('plan-cur').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-cur]');
     if (!b) return;
