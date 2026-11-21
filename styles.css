@@ -996,6 +996,7 @@ input::placeholder { color: #71817b; opacity: 1; }
   text-transform: uppercase;
 }
 .budget-card .big { font-size: clamp(23px, 6.8vw, 33px); letter-spacing: -.045em; }
+.budget-card .label { min-height: 2.5em; white-space: normal; }
 .small { font-size: 13px; }
 .bar { height: 8px; margin-top: 16px; }
 .budget-foot { margin-top: 10px; }
