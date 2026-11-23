@@ -1,15 +1,16 @@
 import {
   CATEGORIES, PLAN_KINDS, SCHEMA_VERSION, LEVEL_TEXT, NO_RATE, NO_DEST_LABEL, WHOLE_TRIP_LABEL, fillMissingRate, categoryById,
   stageById, stageLabel, destinationOf, assignSingleStage, sortStages, stageOfDay, stageDates, makeStage, cleanStageName, planKindById, convert,
-  expenseValue, planValue, currentRate, pairOf, isValidCurrencies, currencyOptions, currencyName, dayKey, addDays,
-  makeExpense, makePlanItem, setPlanPaid, keypadInput, parseAmount, parseDecimal, quickAmounts, dayBudget, spentIn,
+  expenseValue, planValue, currentRate, pairOf, isValidCurrencies, currencyName, dayKey, addDays,
+  searchCurrencies, tripCurrencies, isExtraCurrency, currentXRate, extraRates, fillMissingXRate, planXRate, currencyDigits,
+  fitKeypad, makeExpense, makePlanItem, setPlanPaid, keypadInput, parseAmount, parseDecimal, quickAmounts, dayBudget, spentIn,
   budgetStatus, expensesOfDay, totals, totalsByCategory, totalsByStage, dailySummary, tripSummary, daysBetween,
   isValidTrip, migrateData, rateUrls, parseFrankfurterV2, parseFrankfurter, parseErApi, isPlausibleRate,
   isFarFromRate, makeFormat, formatRate, formatDay, formatDayShort, formatShortDate, formatDayMonth, toCSVAll,
   formatKeypad, amountToInput, isISODate, makeScenario, nextScenarioName, cleanScenarioName, needsSetup, cleanText,
 } from './core.js';
 
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const KEY = {
   schema: 'cdv.schema',
   expenses: 'cdv.expenses',
@@ -19,6 +20,7 @@ const KEY = {
   backup: 'cdv.backup-v1', // copia dei dati com'erano prima della migrazione alla v2
   backup2: 'cdv.backup-v2', // copia dei dati della v2.0.0 prima della migrazione alla v2.1
   backup3: 'cdv.backup-v3', // copia dei dati della v2.1.0 prima della migrazione alla v2.2
+  backup4: 'cdv.backup-v4', // copia dei dati della v2.2/v2.3 prima della migrazione alla v2.4
   unreadable: 'cdv.illeggibili', // dati salvati che non si riescono a leggere: non si sovrascrivono senza copia
 };
 const RATE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -58,9 +60,10 @@ function writeOnce(key, value) {
 const BACKUPS = {
   2: { key: KEY.backup2, version: '2.0.0' },
   3: { key: KEY.backup3, version: '2.1.0' },
+  4: { key: KEY.backup4, version: '2.2.0/2.3.0' },
 };
 
-// Legge i dati salvati (v1, v2.0, v2.1 o v2.2) e li porta all'ultimo schema. Prima di cambiare qualcosa salva una
+// Legge i dati salvati (v1, v2.0, v2.1, v2.2 o v2.3) e li porta all'ultimo schema. Prima di cambiare qualcosa salva una
 // copia dei dati originali (una per versione di partenza), così niente si perde nemmeno in caso di problemi.
 function loadData() {
   const raw = {
@@ -152,24 +155,34 @@ const ready = () => !needsSetup(state.settings);
 const cur = () => state.settings.currencies;
 const rate = () => currentRate(cur(), state.settings.rate);
 const hasRate = () => rate() !== null;
-const fx = () => ({ local: cur().local, home: cur().home, rate: rate() });
+// Altre valute del viaggio (oltre alla locale e a quella di riferimento) e il loro tasso attuale.
+const extras = () => state.settings.extraCurrencies || [];
+const codes = () => tripCurrencies(cur(), extras());
+const xr = (code) => currentXRate(cur(), state.settings.extraRates, code);
+const isExtra = (code) => isExtraCurrency(code, cur());
+const fx = () => ({ local: cur().local, home: cur().home, rate: rate(), extra: extras(), rates: extraRates(cur(), extras(), state.settings.extraRates) });
 const same = () => cur().local === cur().home;
+// Tasso della sua valuta da fissare su una riga nuova: solo per le altre valute (per le due del viaggio il campo non c'è).
+const xrateFor = (code) => (isExtra(code) ? xr(code) : undefined);
 
-// Formattatori per le valute del viaggio, ricreati solo quando cambiano valute o tasso.
+// Formattatori per le valute del viaggio, ricreati solo quando cambiano valute o tassi.
 let fmtCache = { key: '', f: null };
 function F() {
   const x = fx();
-  const key = `${x.local}/${x.home}/${x.rate}`;
+  const key = JSON.stringify(x);
   if (fmtCache.key !== key) fmtCache = { key, f: makeFormat(x) };
   return fmtCache.f;
 }
 
 const val = (e) => expenseValue(e, fx());
 const pval = (p) => planValue(p, fx());
-// Valore di un importo nell'altra valuta (quella che non è la sua), già formattato.
-function otherText(amount, currency, r) {
-  if (same()) return '';
-  const v = convert(amount, currency, r, fx());
+// Valore di un importo nell'altra valuta (quella che non è la sua), già formattato. Un importo in un'altra
+// valuta si mostra nella valuta locale, quella dei totali.
+function otherText(amount, currency, r, x) {
+  const extra = isExtra(currency);
+  if (same() && !extra) return '';
+  const v = convert(amount, currency, r, fx(), x);
+  if (extra) return F().local(v.local);
   return currency === cur().home ? F().local(v.local) : F().home(v.home);
 }
 
@@ -179,6 +192,18 @@ function setRate(r) {
   for (const set of [state.real, ...state.scenarios]) {
     fillMissingRate(set.expenses, r.value);
     fillMissingRate(set.plan, r.value);
+  }
+  save();
+  refreshAll();
+}
+
+// Tasso di un'altra valuta verso quella di riferimento (scritto a mano): completa le righe di quella valuta
+// registrate senza tasso.
+function setXRate(code, r) {
+  state.settings.extraRates = { ...state.settings.extraRates, [code]: { ...r, base: cur().home } };
+  for (const set of [state.real, ...state.scenarios]) {
+    fillMissingXRate(set.expenses, code, r.value);
+    fillMissingXRate(set.plan, code, r.value);
   }
   save();
   refreshAll();
@@ -264,21 +289,40 @@ function destHTML(id) {
   return d.missing ? `<span class="no-dest">${esc(d.label)}</span>` : esc(d.label);
 }
 
-// Pulsanti per scegliere tra valuta locale e di casa (con la stessa valuta non servono).
-function renderCurSeg(container, selected) {
+// Pulsanti per scegliere la valuta: locale e di riferimento (con la stessa valuta non servono) e, se `all`,
+// anche le altre valute del viaggio.
+function renderCurSeg(container, selected, all = false) {
   const c = cur();
-  const codes = same() ? [c.local] : [c.local, c.home];
-  container.hidden = codes.length < 2;
-  container.innerHTML = codes.map((code) => `<button type="button" data-cur="${code}" role="radio" aria-label="${esc(currencyName(code))}">${esc(F().symbol(code))}</button>`).join('');
+  const list = all ? codes() : tripCurrencies(c);
+  container.hidden = list.length < 2;
+  container.innerHTML = list.map((code) => `<button type="button" data-cur="${code}" role="radio" aria-label="${esc(currencyName(code))}">${esc(F().symbol(code))}</button>`).join('');
   markRadio(container, 'cur', selected);
 }
 
-function fillCurrencySelect(select, selected, placeholder) {
-  if (!select.options.length) {
-    select.innerHTML = (placeholder ? `<option value="">${esc(placeholder)}</option>` : '')
-      + currencyOptions().map((o) => `<option value="${o.code}">${esc(o.name)} (${o.code})</option>`).join('');
+// Elenco delle valute (statico, ISO 4217) filtrato dal campo di ricerca collegato (data-for = id dell'elenco):
+// si cerca per codice o per nome. `exclude` = valute da non proporre.
+function fillCurrencySelect(select, selected, placeholder, exclude = []) {
+  const q = (document.querySelector(`.cur-q[data-for="${select.id}"]`) || { value: '' }).value.trim();
+  const list = searchCurrencies(q).filter((o) => !exclude.includes(o.code));
+  const key = `${q}|${placeholder || ''}|${exclude.join()}`;
+  if (select.dataset.key !== key || !select.options.length) {
+    select.dataset.key = key;
+    const head = !list.length
+      ? `<option value="">Nessuna valuta per «${esc(q)}»</option>`
+      : placeholder ? `<option value="">${esc(placeholder)}</option>` : '';
+    select.innerHTML = head + list.map((o) => `<option value="${o.code}">${esc(o.name)} (${o.code})</option>`).join('');
   }
   select.value = selected || '';
+  if (select.value !== (selected || '') && select.options.length) select.selectedIndex = 0;
+}
+
+// Scrivendo nella ricerca l'elenco si restringe e propone subito la prima valuta trovata.
+function onCurrencySearch(input, placeholder, exclude = () => []) {
+  const select = $(input.dataset.for);
+  const q = input.value.trim();
+  const first = searchCurrencies(q).find((o) => !exclude().includes(o.code));
+  fillCurrencySelect(select, q ? first && first.code : select.value, placeholder, exclude());
+  select.dispatchEvent(new Event('change'));
 }
 
 function vibrate(ms) {
@@ -314,9 +358,8 @@ function renderSetup() {
   if (document.activeElement !== $('setup-name')) $('setup-name').value = s.tripName || '';
   if (document.activeElement !== $('setup-dest')) $('setup-dest').value = s.destination || '';
   fillCurrencySelect($('setup-local'), $('setup-local').value || (s.currencies && s.currencies.local), 'Scegli…');
-  fillCurrencySelect($('setup-home'), $('setup-home').value || (s.currencies ? s.currencies.home : 'EUR'), 'Scegli…');
-  $('setup-local').disabled = locked;
-  $('setup-home').disabled = locked;
+  fillCurrencySelect($('setup-home'), $('setup-home').value || (s.currencies && s.currencies.home), 'Scegli…');
+  for (const id of ['setup-local', 'setup-home', 'setup-local-q', 'setup-home-q']) $(id).disabled = locked;
   $('setup-cur-note').hidden = !locked;
   if (isValidTrip(s.trip)) {
     if (!$('setup-start').value) $('setup-start').value = s.trip.start;
@@ -357,7 +400,7 @@ function submitSetup(ev) {
   const home = $('setup-home').value;
   const trip = { start: $('setup-start').value, end: $('setup-end').value };
   if (!local) return fail('Scegli la valuta locale (quella che usi nel posto dove vai).', $('setup-local'));
-  if (!home) return fail('Scegli la valuta di casa.', $('setup-home'));
+  if (!home) return fail('Scegli la valuta di riferimento (di solito quella di casa).', $('setup-home'));
   if (!isISODate(trip.start) || !isISODate(trip.end)) return fail('Scegli le date di partenza e di ritorno.', $('setup-start'));
   if (!isValidTrip(trip)) return fail('Il ritorno deve essere uguale o dopo la partenza.', $('setup-end'));
   const rawBudget = $('setup-budget').value.trim();
@@ -379,12 +422,15 @@ function submitSetup(ev) {
 }
 
 // Valute del viaggio (solo finché non ci sono spese): tasso, valuta di inserimento e budget seguono la scelta.
+// Le altre valute restano (tranne quella diventata locale o di riferimento); i loro tassi valgono per la valuta
+// di riferimento in cui sono stati scritti.
 function setCurrencies(next) {
   const s = state.settings;
   const prev = isValidCurrencies(s.currencies) ? s.currencies : null;
   if (prev && prev.local === next.local && prev.home === next.home) return false;
   s.currencies = { local: next.local, home: next.home };
   if (!prev || pairOf(prev) !== pairOf(next)) s.rate = { ...NO_RATE, mode: 'auto', fetchedAt: 0 };
+  s.extraCurrencies = (s.extraCurrencies || []).filter((c) => isExtraCurrency(c, next));
   s.inputCurrency = next.local;
   const side = (c) => (prev && c === prev.home ? next.home : next.local);
   for (const set of [state.real, ...state.scenarios]) {
@@ -395,7 +441,12 @@ function setCurrencies(next) {
 
 // ---------- Schermata Oggi ----------
 
-const entryCurrency = () => (state.fix ? state.fix.currency : state.settings.inputCurrency);
+// Valuta delle spese nuove (o della correzione): sempre una delle valute del viaggio.
+const entryCurrency = () => {
+  const c = state.fix ? state.fix.currency : state.settings.inputCurrency;
+  return codes().includes(c) ? c : cur().local;
+};
+const entryDigits = () => currencyDigits(entryCurrency());
 
 function renderQuick() {
   const c = entryCurrency();
@@ -412,9 +463,10 @@ function renderQuick() {
 function renderEntry() {
   const c = entryCurrency();
   const toggle = $('cur-toggle');
-  toggle.hidden = same() && !state.fix;
+  toggle.hidden = codes().length < 2 && !state.fix;
   toggle.textContent = F().symbol(c);
   toggle.classList.toggle('home', c === cur().home && !same());
+  toggle.classList.toggle('extra', isExtra(c));
   toggle.classList.toggle('long', F().symbol(c).length > 2);
   toggle.setAttribute('aria-label', `Valuta: ${currencyName(c)}. Tocca per cambiare`);
 
@@ -422,17 +474,22 @@ function renderEntry() {
   amountEl.textContent = formatKeypad(state.amount);
   amountEl.classList.toggle('placeholder', !state.amount);
 
-  const n = parseAmount(state.amount);
+  const n = parseAmount(state.amount, c);
+  const known = isExtra(c) ? xr(c) !== null && (same() || hasRate()) : hasRate();
   $('amount-conv').textContent = state.fix
     ? 'Correzione'
-    : !(n > 0) || same()
+    : !(n > 0) || (same() && !isExtra(c))
       ? ''
-      : hasRate() ? '≈ ' + otherText(n, c, rate()) : 'manca il cambio';
+      : known ? '≈ ' + otherText(n, c, rate(), xr(c)) : 'manca il cambio';
   const day = entryDay();
   const other = day !== state.today;
   const done = $('done');
   done.textContent = state.fix ? 'Salva correzione' : other ? `Aggiungi spesa · ${formatDayShort(day, state.today).toLowerCase()}` : 'Aggiungi spesa';
   done.classList.toggle('ready', n > 0 && !!state.category);
+  // valute senza decimali (yen, won, dong): la virgola non serve
+  const comma = document.querySelector('#keypad [data-k=","]');
+  comma.disabled = entryDigits() === 0;
+  comma.setAttribute('aria-label', comma.disabled ? `Virgola: ${currencyName(c)} senza decimali` : 'Virgola');
   $('fix-cancel').hidden = !state.fix;
   $('amount-clear').hidden = !!state.fix || !state.amount;
   document.querySelector('.entry').classList.toggle('fixing', !!state.fix);
@@ -527,12 +584,19 @@ function compactRate(value) {
   return `1${/\p{L}/u.test(h) ? ' ' : ''}${h} = ${formatRate(value)}${/\p{L}/u.test(l) ? ' ' : ''}${l}`;
 }
 
+// Altre valute del viaggio ancora senza tasso.
+const missingXRates = () => extras().filter((c) => xr(c) === null);
+
 function renderRateChip() {
   const r = state.settings.rate;
   const chip = $('rate-chip');
-  chip.hidden = !!scenario() || same();
-  if (!hasRate()) {
+  const missing = missingXRates();
+  chip.hidden = !!scenario() || (same() && !missing.length);
+  if (!same() && !hasRate()) {
     chip.textContent = 'Cambio mancante · tocca qui';
+    chip.classList.add('stale');
+  } else if (missing.length) {
+    chip.textContent = `Cambio ${missing.join(', ')} mancante · tocca qui`;
     chip.classList.add('stale');
   } else {
     const d = r.date ? formatDayMonth(r.date) : '';
@@ -555,7 +619,7 @@ function onKey(k) {
   const start = state.fresh && /^\d/.test(k) ? '' : state.amount;
   state.fresh = false;
   state.quick = null;
-  state.amount = keypadInput(start, k);
+  state.amount = keypadInput(start, k, entryDigits());
   renderEntry();
 }
 
@@ -586,7 +650,8 @@ function pickStage(id) {
 
 function addExpense() {
   if (state.fix) return saveFix();
-  const amount = parseAmount(state.amount);
+  const currency = entryCurrency();
+  const amount = parseAmount(state.amount, currency);
   if (!(amount > 0)) {
     attention(document.querySelector('.amount-row'));
     showToast('Scrivi l\'importo o tocca un importo rapido', null, 2500);
@@ -599,10 +664,11 @@ function addExpense() {
   }
   const exp = makeExpense({
     amount,
-    currency: state.settings.inputCurrency,
+    currency,
     category: state.category,
     stage: stageById(stages(), cfg().stage) ? cfg().stage : null,
     rate: rate(),
+    xrate: xrateFor(currency),
     day: entryDay(),
   });
   const before = snapshot();
@@ -782,10 +848,13 @@ function cancelFix() {
 }
 
 function saveFix() {
-  const amount = parseAmount(state.amount);
+  const amount = parseAmount(state.amount, state.fix.currency);
   if (!(amount > 0)) return;
   const exp = state.expenses.find((e) => e.id === state.fix.id);
   const changes = { amount, currency: state.fix.currency, category: state.category || (exp && exp.category) };
+  // in un'altra valuta: resta il tasso della spesa se la valuta non cambia, altrimenti quello attuale
+  if (exp && isExtra(changes.currency)) changes.xrate = exp.currency === changes.currency && exp.xrate > 0 ? exp.xrate : xr(changes.currency);
+  else changes.xrate = undefined;
   const id = state.fix.id;
   endFix();
   if (!exp) return renderEntry();
@@ -871,7 +940,7 @@ function renderTrip() {
       ${g.items.map((p) => {
         const k = planKindById(p.kind);
         const title = p.label ? `${k.label} · ${p.label}` : k.label;
-        const other = otherText(p.amount, p.currency, p.paid && p.rate > 0 ? p.rate : rate());
+        const other = otherText(p.amount, p.currency, p.paid && p.rate > 0 ? p.rate : rate(), planXRate(p, fx()));
         return `<div class="plan-row${p.paid ? ' paid' : ''}">
           <button type="button" class="plan-main" data-plan-edit="${esc(p.id)}">
             <span class="t">${esc(title)}${destOf(p.stage).label ? `<br><span class="sub">${destHTML(p.stage)}</span>` : ''}</span>
@@ -896,7 +965,7 @@ function togglePaid(id) {
   const p = state.plan.find((x) => x.id === id);
   if (!p) return;
   const before = snapshot();
-  const next = setPlanPaid(p, !p.paid, rate());
+  const next = setPlanPaid(p, !p.paid, rate(), xrateFor(p.currency));
   state.plan = state.plan.map((x) => (x.id === id ? next : x));
   changed(before, `${planKindById(p.kind).label} ${F().money(p.amount, p.currency)}: ${next.paid ? 'pagato' : 'da pagare'}`);
 }
@@ -909,7 +978,7 @@ function openPlan(id = null) {
   state.planEditing = p ? p.id : null;
   planForm.kind = p ? p.kind : 'volo';
   // un volo si paga di solito nella valuta di casa
-  planForm.cur = p ? p.currency : cur().home;
+  planForm.cur = p && codes().includes(p.currency) ? p.currency : cur().home;
   planForm.paid = p ? p.paid : false;
   $('plan-title').textContent = p ? 'Modifica voce del viaggio' : 'Nuova voce del viaggio';
   $('plan-label').value = p ? p.label : '';
@@ -921,7 +990,7 @@ function openPlan(id = null) {
   $('plan-delete').hidden = !p;
   $('plan-msg').textContent = '';
   $('plan-msg').className = 'hint';
-  renderCurSeg($('plan-cur'), planForm.cur);
+  renderCurSeg($('plan-cur'), planForm.cur, true);
   markPlanForm();
   $('plan-sheet').hidden = false;
 }
@@ -973,7 +1042,8 @@ function closePlan() {
 
 function savePlan(ev) {
   ev.preventDefault();
-  const amount = parseAmount($('plan-amount').value);
+  const currency = codes().includes(planForm.cur) ? planForm.cur : cur().local;
+  const amount = parseAmount($('plan-amount').value, currency);
   if (!(amount > 0)) {
     $('plan-msg').textContent = 'Scrivi l\'importo, per esempio 650 o 1.200,50.';
     $('plan-msg').className = 'hint err';
@@ -1003,18 +1073,23 @@ function savePlan(ev) {
     label: $('plan-label').value.trim().slice(0, 80),
     stage,
     amount,
-    currency: same() ? cur().local : planForm.cur,
+    currency,
   };
   const before = snapshot();
   const old = state.planEditing ? state.plan.find((x) => x.id === state.planEditing) : null;
   let item;
   if (old) {
     item = { ...old, ...fields };
-    // pagata: il tasso resta quello del pagamento, a meno che cambi lo stato
-    if (old.paid !== planForm.paid || !(item.rate > 0)) item = setPlanPaid(item, planForm.paid, rate());
+    // pagata: il tasso resta quello del pagamento, a meno che cambi lo stato (o la valuta, se è un'altra valuta)
+    const extra = isExtra(currency);
+    if (old.paid !== planForm.paid || !(item.rate > 0) || (extra && (old.currency !== currency || !(item.xrate > 0)))) {
+      item = setPlanPaid(item, planForm.paid, rate(), xrateFor(currency));
+    } else if (!extra) {
+      delete item.xrate;
+    }
     state.plan = state.plan.map((x) => (x.id === old.id ? item : x));
   } else {
-    item = makePlanItem({ ...fields, paid: planForm.paid, rate: rate() });
+    item = makePlanItem({ ...fields, paid: planForm.paid, rate: rate(), xrate: xrateFor(currency) });
     state.plan.push(item);
   }
   if (created) {
@@ -1098,7 +1173,7 @@ function renderSummary() {
       ${paidPlan.map((p) => {
         const k = planKindById(p.kind);
         const title = p.label ? `${k.label} · ${p.label}` : k.label;
-        const other = otherText(p.amount, p.currency, p.rate > 0 ? p.rate : rate());
+        const other = otherText(p.amount, p.currency, p.rate > 0 ? p.rate : rate(), planXRate(p, fx()));
         return `<div class="plan-row paid">
           <button type="button" class="plan-main" data-plan-edit="${esc(p.id)}">
             <span class="t">${esc(title)}${destOf(p.stage).label ? `<br><span class="sub">${destHTML(p.stage)}</span>` : ''}</span>
@@ -1141,7 +1216,7 @@ function renderSummary() {
             ${d.expenses.map((e) => {
               const c = categoryById(e.category);
               const t = new Date(e.ts).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-              const other = otherText(e.amount, e.currency, e.rate);
+              const other = otherText(e.amount, e.currency, e.rate, e.xrate);
               const where = destOf(e.stage).label ? ` · ${destHTML(e.stage)}` : '';
               return `<li><button type="button" data-edit="${esc(e.id)}">
                 ${icon(c.id)}
@@ -1164,18 +1239,20 @@ let budgetCur = null;
 function renderSettings() {
   const s = state.settings;
   // Il viaggio: nome, destinazione e valute (comuni al reale e ai piani)
-  if (![$('info-name'), $('info-dest'), $('info-local'), $('info-home')].includes(document.activeElement)) {
+  const infoFields = ['info-name', 'info-dest', 'info-local', 'info-home', 'info-local-q', 'info-home-q'].map($);
+  if (!infoFields.includes(document.activeElement)) {
     $('info-name').value = s.tripName || '';
     $('info-dest').value = s.destination || '';
+    $('info-local-q').value = '';
+    $('info-home-q').value = '';
     fillCurrencySelect($('info-local'), cur().local);
     fillCurrencySelect($('info-home'), cur().home);
   }
   const locked = hasAnyData();
-  $('info-local').disabled = locked;
-  $('info-home').disabled = locked;
+  for (const id of ['info-local', 'info-home', 'info-local-q', 'info-home-q']) $(id).disabled = locked;
   $('info-cur-note').textContent = locked
-    ? 'Le valute non si cambiano dopo la prima spesa: le spese salvate restano nella loro valuta. Per un viaggio con altre valute esporta il CSV e cancella le spese.'
-    : 'Valuta locale: quella che usi nel posto dove vai. Valuta di casa: quella in cui ragioni i conti.';
+    ? 'Valuta locale e di riferimento non si cambiano dopo la prima spesa: le spese salvate restano nella loro valuta. Per pagare in un\'altra valuta aggiungila qui sotto, in «Cambio».'
+    : 'Valuta locale: quella che usi nel posto dove vai. Valuta di riferimento: quella in cui ragioni i conti (di solito quella di casa). Altre valute le aggiungi in «Cambio».';
 
   const b = cfg().budget;
   budgetCur = b ? b.currency : budgetCur && [cur().local, cur().home].includes(budgetCur) ? budgetCur : cur().local;
@@ -1195,7 +1272,8 @@ function renderSettings() {
   $('settings-plan-note').hidden = !sc;
   if (sc) $('settings-plan-name').textContent = sc.name;
   $('wipe-card').hidden = !!sc;
-  $('rate-card').hidden = same();
+  $('rate-main').hidden = same();
+  renderExtras();
   const n = state.scenarios.length;
   $('version').textContent = `Cassa di viaggio v${APP_VERSION} · ${state.real.expenses.length} spese e ${state.real.plan.length} voci del viaggio su questo telefono${n ? ` · ${n} ${n === 1 ? 'piano' : 'piani'}` : ''}`;
 }
@@ -1207,7 +1285,7 @@ function saveInfo(ev) {
   s.destination = cleanText($('info-dest').value);
   let cMsg = '';
   if (!hasAnyData()) {
-    const next = { local: $('info-local').value, home: $('info-home').value };
+    const next = { local: $('info-local').value || cur().local, home: $('info-home').value || cur().home };
     if (isValidCurrencies(next) && setCurrencies(next)) cMsg = ' Valute cambiate: controlla il budget del giorno.';
   }
   save();
@@ -1251,6 +1329,105 @@ function renderRateInfo() {
   const ref = 10 ** Math.max(0, Math.round(Math.log10(rate())) + 1);
   info.innerHTML = `<b>${esc(F().rate(rate()))}</b><br>${esc(F().local(ref))} = ${esc(F().home(ref / rate()))}<br><span class="hint">${where}</span>`;
   $('rate-refresh').textContent = r.mode === 'manual' ? 'Torna al cambio automatico' : 'Aggiorna ora';
+}
+
+// ---- Altre valute del viaggio ----
+
+// Righe (reali o dei piani) in una valuta: una valuta usata non si toglie.
+const usesOf = (code) => [state.real, ...state.scenarios]
+  .reduce((n, set) => n + set.expenses.filter((e) => e.currency === code).length + set.plan.filter((p) => p.currency === code).length, 0);
+
+function renderExtras() {
+  const f = F();
+  const home = cur().home;
+  $('extra-hint').textContent = `Per le spese in una valuta diversa da ${currencyName(cur().local)}${same() ? '' : ` e ${currencyName(home)}`} (uno scalo, un paese vicino). Per ognuna scrivi quanto vale 1 ${currencyName(home)}: i totali restano in ${same() ? currencyName(home) : `${currencyName(cur().local)} e ${currencyName(home)}`}.`;
+  const box = $('extra-list');
+  if (!box.contains(document.activeElement)) {
+    box.innerHTML = extras().map((c) => {
+      const r = state.settings.extraRates && state.settings.extraRates[c];
+      const x = xr(c);
+      const n = usesOf(c);
+      const status = x === null
+        ? '<span class="err-text">manca il cambio</span>'
+        : `${esc(f.xrate(c, x))} · scritto a mano il ${esc(formatShortDate(r.date))}`;
+      const used = n ? ` · ${n} ${n === 1 ? 'riga' : 'righe'}` : '';
+      return `<div class="extra-item" data-extra="${c}">
+        <div class="extra-head">
+          <span class="t">${esc(currencyName(c))} (${c})<br><span class="sub">${status}${used}</span></span>
+          ${n ? '' : `<button type="button" class="btn small-btn danger" data-extra-del="${c}" aria-label="Togli ${esc(currencyName(c))}">Togli</button>`}
+        </div>
+        <form class="inline-form" data-xrate-form="${c}">
+          <label for="xrate-${c}" class="inline-label">1 ${esc(f.symbol(home))} =</label>
+          <input id="xrate-${c}" type="text" inputmode="decimal" autocomplete="off" placeholder="${x === null ? '' : esc(formatRate(x))}" aria-label="${esc(`${currencyName(c)} per 1 ${currencyName(home)}`)}">
+          <span class="inline-label">${esc(f.symbol(c))}</span>
+          <button type="submit" class="btn">${x === null ? 'Salva' : 'Correggi'}</button>
+        </form>
+      </div>`;
+    }).join('');
+  }
+  if (document.activeElement !== $('extra-q') && document.activeElement !== $('extra-cur')) {
+    fillCurrencySelect($('extra-cur'), $('extra-cur').value, 'Scegli…', codes());
+  }
+}
+
+function addExtra(ev) {
+  ev.preventDefault();
+  const code = $('extra-cur').value;
+  const msg = $('extra-msg');
+  if (!code || codes().includes(code)) {
+    msg.textContent = 'Cerca la valuta per nome o codice (es. dollaro, USD) e sceglila dall\'elenco.';
+    msg.className = 'hint err';
+    return;
+  }
+  state.settings.extraCurrencies = [...extras(), code];
+  $('extra-q').value = '';
+  $('extra-cur').value = '';
+  $('extra-q').blur();
+  save();
+  refreshAll();
+  msg.textContent = `${currencyName(code)} aggiunta: scrivi il cambio qui sopra. Nella schermata Oggi la scegli con il tasto della valuta.`;
+  msg.className = 'hint ok';
+  const input = $(`xrate-${code}`);
+  if (input) input.focus();
+}
+
+function removeExtra(code) {
+  if (usesOf(code)) return;
+  const s = state.settings;
+  s.extraCurrencies = extras().filter((c) => c !== code);
+  const { [code]: _gone, ...rest } = s.extraRates || {};
+  s.extraRates = rest;
+  if (s.inputCurrency === code) s.inputCurrency = cur().local;
+  save();
+  refreshAll();
+  $('extra-msg').textContent = `${currencyName(code)} tolta.`;
+  $('extra-msg').className = 'hint ok';
+}
+
+const xrateConfirm = {};
+
+function saveXRate(code, input) {
+  const v = parseDecimal(input.value);
+  const msg = $('extra-msg');
+  const prev = xr(code);
+  if (!isPlausibleRate(v)) {
+    msg.textContent = `Scrivi quanti ${currencyName(code)} vale 1 ${currencyName(cur().home)}, per esempio ${formatRate(prev || 1.1)}.`;
+    msg.className = 'hint err';
+    input.focus();
+    return;
+  }
+  if (isFarFromRate(v, prev) && xrateConfirm[code] !== v) {
+    xrateConfirm[code] = v;
+    msg.textContent = `È molto diverso dal cambio attuale (${formatRate(prev)}). Se è giusto, tocca di nuovo «Correggi».`;
+    msg.className = 'hint err';
+    return;
+  }
+  delete xrateConfirm[code];
+  // via il focus dal modulo (campo o pulsante), così l'elenco si ridisegna con il cambio nuovo
+  if ($('extra-list').contains(document.activeElement)) document.activeElement.blur();
+  setXRate(code, { value: v, date: dayKey(), source: 'manuale', mode: 'manual' });
+  msg.textContent = `Cambio salvato: ${F().xrate(code, v)}.`;
+  msg.className = 'hint ok';
 }
 
 function saveBudget(ev) {
@@ -1695,6 +1872,11 @@ function init() {
   renderCats($('cats'), null, pickCategory);
   $('plan-kinds').innerHTML = PLAN_KINDS.map((k) => `<button type="button" data-kind="${k.id}" role="radio">${esc(k.label)}</button>`).join('');
 
+  // Ricerca nelle valute (configurazione, Impostazioni, altre valute)
+  for (const id of ['setup-local-q', 'setup-home-q']) $(id).addEventListener('input', (ev) => onCurrencySearch(ev.target, 'Scegli…'));
+  for (const id of ['info-local-q', 'info-home-q']) $(id).addEventListener('input', (ev) => onCurrencySearch(ev.target));
+  $('extra-q').addEventListener('input', (ev) => onCurrencySearch(ev.target, 'Scegli…', codes));
+
   // Configurazione guidata
   $('setup-form').addEventListener('submit', submitSetup);
   for (const id of ['setup-local', 'setup-home']) $(id).addEventListener('change', renderSetupBudgetSeg);
@@ -1722,15 +1904,18 @@ function init() {
   $('done').addEventListener('click', addExpense);
   $('fix-cancel').addEventListener('click', cancelFix);
   $('amount-clear').addEventListener('click', () => onKey('clear'));
+  // Il tasto della valuta passa alla valuta successiva del viaggio (locale, di riferimento, poi le altre).
   $('cur-toggle').addEventListener('click', () => {
     dismissToast();
-    const { local, home } = cur();
+    const list = codes();
+    const next = list[(list.indexOf(entryCurrency()) + 1) % list.length];
     if (state.fix) {
-      state.fix.currency = state.fix.currency === local ? home : local;
+      state.fix.currency = next;
     } else {
-      state.settings.inputCurrency = state.settings.inputCurrency === local ? home : local;
+      state.settings.inputCurrency = next;
       save();
     }
+    state.amount = fitKeypad(state.amount, currencyDigits(next));
     state.fresh = false;
     state.quick = null;
     renderEntry();
@@ -1845,6 +2030,17 @@ function init() {
     if (d) deleteStage(d.dataset.stageDel);
   });
   $('rate-form').addEventListener('submit', saveManualRate);
+  $('extra-form').addEventListener('submit', addExtra);
+  $('extra-list').addEventListener('submit', (ev) => {
+    const form = ev.target.closest('[data-xrate-form]');
+    if (!form) return;
+    ev.preventDefault();
+    saveXRate(form.dataset.xrateForm, form.querySelector('input'));
+  });
+  $('extra-list').addEventListener('click', (ev) => {
+    const d = ev.target.closest('[data-extra-del]');
+    if (d) removeExtra(d.dataset.extraDel);
+  });
   $('rate-refresh').addEventListener('click', onRefreshRate);
   $('export').addEventListener('click', exportCSV);
   $('wipe').addEventListener('click', wipe);

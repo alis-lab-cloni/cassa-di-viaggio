@@ -109,7 +109,8 @@ test('viaggio in Giappone (JPY/EUR): spese in 3 passi con gli importi rapidi in 
   // e la migrazione (riapertura dell'app) non cambia niente
   const again = C.migrateData({ schema: '4', expenses: list, settings: s, plan: [], scenarios: [] });
   assert.deepEqual(again.expenses, list);
-  assert.deepEqual(again.settings, s);
+  // (dalla v2.4 si aggiungono solo le altre valute del viaggio, vuote)
+  assert.deepEqual(again.settings, { ...s, extraCurrencies: [], extraRates: {} });
   assert.equal(again.report.dropped, 0);
 });
 
@@ -172,8 +173,8 @@ test('migrazione v2.1.0 → v2.2: ogni spesa, voce, piano e impostazione resta; 
   const before = JSON.stringify(V21_DATA);
   const m = C.migrateData(V21_DATA, 1795400000000);
   assert.equal(JSON.stringify(V21_DATA), before, 'i dati di partenza non si toccano');
-  assert.equal(m.schema, 4);
-  assert.deepEqual(m.report, { from: 3, to: 4, expenses: 4, plan: 3, scenarios: 1, dropped: 0 });
+  assert.equal(m.schema, C.SCHEMA_VERSION); // 4 nella v2.2/v2.3, 5 dalla v2.4
+  assert.deepEqual(m.report, { from: 3, to: C.SCHEMA_VERSION, expenses: 4, plan: 3, scenarios: 1, dropped: 0 });
   // ogni spesa e voce: stessi campi, il tasso si chiama `rate`
   const same = (a, b) => {
     const { thbPerEur, ...rest } = b;
@@ -236,7 +237,7 @@ test('migrazione v2.1.0 → v2.2 rieseguita non cambia niente', () => {
   const once = C.migrateData(V21_DATA);
   const twice = C.migrateData({ schema: once.schema, expenses: once.expenses, plan: once.plan, settings: once.settings, scenarios: once.scenarios });
   for (const k of ['expenses', 'plan', 'settings', 'scenarios']) assert.deepEqual(twice[k], once[k], k);
-  assert.equal(twice.report.from, 4);
+  assert.equal(twice.report.from, C.SCHEMA_VERSION);
   assert.equal(twice.report.dropped, 0);
 });
 
@@ -255,7 +256,7 @@ const V1_SETTINGS = {
 
 test('migrazione v1.1.2 → v2.2: nessuna spesa persa; mancano solo le date, che chiede la configurazione', () => {
   const m = C.migrateData({ schema: null, expenses: V1_EXPENSES, settings: V1_SETTINGS });
-  assert.deepEqual(m.report, { from: 1, to: 4, expenses: 3, plan: 0, scenarios: 0, dropped: 0 });
+  assert.deepEqual(m.report, { from: 1, to: C.SCHEMA_VERSION, expenses: 3, plan: 0, scenarios: 0, dropped: 0 });
   V1_EXPENSES.forEach((e, i) => {
     const { thbPerEur, ...rest } = e;
     assert.deepEqual(m.expenses[i], { ...rest, stage: null, rate: thbPerEur });

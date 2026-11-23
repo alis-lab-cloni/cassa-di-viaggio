@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.frankfurter.dev https://open.er-api.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Cassa di viaggio</title>
-  <meta name="description" content="Le spese di ogni viaggio, nella valuta del posto e in quella di casa. I dati restano sul telefono.">
+  <meta name="description" content="Le spese di ogni viaggio, in qualsiasi valuta, con i totali nella valuta del posto e in quella di casa. I dati restano sul telefono.">
   <meta name="theme-color" content="#f6f6f3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -42,13 +42,18 @@
         <input id="setup-dest" type="text" maxlength="60" autocomplete="off" placeholder="Paese, regione o città">
       </label>
       <div class="two">
-        <label class="field">Valuta locale
+        <div class="field cur-field">
+          <label for="setup-local">Valuta locale</label>
+          <input id="setup-local-q" class="cur-q" data-for="setup-local" type="search" autocomplete="off" placeholder="Cerca: nome o codice" aria-label="Cerca la valuta locale">
           <select id="setup-local" required></select>
-        </label>
-        <label class="field">Valuta di casa
+        </div>
+        <div class="field cur-field">
+          <label for="setup-home">Valuta di riferimento</label>
+          <input id="setup-home-q" class="cur-q" data-for="setup-home" type="search" autocomplete="off" placeholder="Cerca: nome o codice" aria-label="Cerca la valuta di riferimento">
           <select id="setup-home" required></select>
-        </label>
+        </div>
       </div>
+      <p class="hint">Valuta di riferimento: quella in cui ragioni i conti, di solito quella di casa. Se paghi anche in altre valute le aggiungi poi da Impostazioni › Cambio.</p>
       <p id="setup-cur-note" class="hint" hidden>Le valute restano quelle delle spese già salvate.</p>
       <div class="date-form">
         <label>Partenza <input id="setup-start" type="date" required></label>
@@ -188,8 +193,16 @@
             <input id="info-dest" type="text" maxlength="60" autocomplete="off" placeholder="Facoltativa">
           </label>
           <div class="two">
-            <label class="field">Valuta locale <select id="info-local"></select></label>
-            <label class="field">Valuta di casa <select id="info-home"></select></label>
+            <div class="field cur-field">
+              <label for="info-local">Valuta locale</label>
+              <input id="info-local-q" class="cur-q" data-for="info-local" type="search" autocomplete="off" placeholder="Cerca: nome o codice" aria-label="Cerca la valuta locale">
+              <select id="info-local"></select>
+            </div>
+            <div class="field cur-field">
+              <label for="info-home">Valuta di riferimento</label>
+              <input id="info-home-q" class="cur-q" data-for="info-home" type="search" autocomplete="off" placeholder="Cerca: nome o codice" aria-label="Cerca la valuta di riferimento">
+              <select id="info-home"></select>
+            </div>
           </div>
           <p id="info-cur-note" class="hint"></p>
           <button type="submit" class="btn">Salva</button>
@@ -237,17 +250,30 @@
 
       <div id="rate-card" class="card">
         <h3>Cambio</h3>
-        <p id="rate-info" class="rate-info"></p>
-        <div class="row-btns">
-          <button id="rate-refresh" type="button" class="btn">Aggiorna ora</button>
+        <div id="rate-main">
+          <p id="rate-info" class="rate-info"></p>
+          <div class="row-btns">
+            <button id="rate-refresh" type="button" class="btn">Aggiorna ora</button>
+          </div>
+          <form id="rate-form" class="inline-form">
+            <label for="rate-input" id="rate-home-label" class="inline-label"></label>
+            <input id="rate-input" type="text" inputmode="decimal" autocomplete="off">
+            <span id="rate-local-label" class="inline-label"></span>
+            <button type="submit" class="btn">Correggi</button>
+          </form>
+          <p id="rate-msg" class="hint"></p>
         </div>
-        <form id="rate-form" class="inline-form">
-          <label for="rate-input" id="rate-home-label" class="inline-label"></label>
-          <input id="rate-input" type="text" inputmode="decimal" autocomplete="off">
-          <span id="rate-local-label" class="inline-label"></span>
-          <button type="submit" class="btn">Correggi</button>
+        <h4 class="sub-head">Altre valute</h4>
+        <p id="extra-hint" class="hint"></p>
+        <div id="extra-list" class="extra-list"></div>
+        <form id="extra-form" class="stack-form extra-form">
+          <input id="extra-q" class="cur-q" data-for="extra-cur" type="search" autocomplete="off" placeholder="Cerca: nome o codice (es. dollaro, USD)" aria-label="Cerca una valuta da aggiungere">
+          <div class="inline-form">
+            <select id="extra-cur" aria-label="Valuta da aggiungere"></select>
+            <button type="submit" id="extra-add" class="btn">Aggiungi valuta</button>
+          </div>
         </form>
-        <p id="rate-msg" class="hint"></p>
+        <p id="extra-msg" class="hint"></p>
       </div>
 
       <div class="card">
@@ -273,7 +299,7 @@
 
       <div id="wipe-card" class="card">
         <h3>I tuoi dati</h3>
-        <p class="hint">Le spese restano solo su questo telefono: niente account, niente server. L'app si collega a internet solo per leggere il cambio del giorno, senza inviare i tuoi dati.</p>
+        <p class="hint">Le spese restano solo su questo telefono: niente account, niente server. L'app si collega a internet solo per leggere il cambio del giorno tra valuta locale e di riferimento, senza inviare i tuoi dati; il cambio delle altre valute lo scrivi tu.</p>
         <button id="wipe" type="button" class="btn danger">Cancella tutte le spese</button>
       </div>
       <p class="version" id="version"></p>

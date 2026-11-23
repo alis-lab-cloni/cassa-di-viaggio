@@ -1,6 +1,6 @@
 // Service worker: tiene l'app in cache per funzionare offline (anche in modalità aereo).
 // Le richieste verso altri siti (servizio del cambio) non passano dalla cache.
-const CACHE = 'cassa-di-viaggio-v2.3.0';
+const CACHE = 'cassa-di-viaggio-v2.4.0';
 const ASSETS = [
   './',
   'index.html',
