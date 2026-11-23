@@ -860,8 +860,8 @@ console.log('\nValute libere: viaggio in Giappone (JPY) con riferimento in dolla
     assert.equal(await page.locator('[data-extra-del="KRW"]').count(), 0);
     const csv = readFileSync(await page.download(() => page.tap('#export'), DOWNLOADS), 'utf8').replace(/^﻿/, '').split(/\r\n/);
     assert.equal(csv[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_USD;JPY_per_USD;modalita;piano;valuta_per_USD');
-    assert.ok(csv.some((l) => /;spesa;Trasporti;.*;14000,00;KRW;1500,00;10,00;150,00;reale;;1400,00$/.test(l)), csv.join('\n'));
-    assert.ok(csv.some((l) => /;spesa;Cibo;.*;3000,00;JPY;3000,00;20,00;150,00;reale;;$/.test(l)), csv.join('\n'));
+    assert.ok(csv.some((l) => /;spesa;Trasporti;.*;14000;KRW;1500;10,00;150,00;reale;;1400,00$/.test(l)), csv.join('\n'));
+    assert.ok(csv.some((l) => /;spesa;Cibo;.*;3000;JPY;3000;20,00;150,00;reale;;$/.test(l)), csv.join('\n'));
   });
 
   await step('sempre offline: l\'app si riapre con valute, cambi a mano e totali', async () => {
@@ -878,6 +878,101 @@ console.log('\nValute libere: viaggio in Giappone (JPY) con riferimento in dolla
 
   await step('nessun errore JavaScript', async () => assert.deepEqual(errors, []));
   await page.setOffline(false);
+  await context.close();
+}
+
+// ============ MAN-425: CSV con i decimali di ogni valuta (KWD 3, JPY 0), uguale al riepilogo ============
+console.log('\nDecimali delle valute nel CSV: viaggio in yen (0 decimali) con riferimento in dinari kuwaitiani (3 decimali)');
+{
+  server.setRoot(APP);
+  const { context, page, errors } = await newPhone(DEVICES[0].viewport);
+  await page.goto(BASE);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const add = async (keys, cat) => {
+    for (const k of keys) await tapKey(page, k);
+    await page.tap(`#cats [data-cat="${cat}"]`);
+    await page.tap('#done');
+  };
+  const csvRows = async () => {
+    await page.tap('.tabs [data-view="settings"]');
+    const csv = readFileSync(await page.download(() => page.tap('#export'), DOWNLOADS), 'utf8').replace(/^﻿/, '').trim().split(/\r\n/);
+    assert.equal(csv[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_KWD;JPY_per_KWD;modalita;piano');
+    return csv.slice(1).map((l) => l.split(';'));
+  };
+
+  await step('configurazione JPY con riferimento KWD e cambio a mano: 1 KWD = 325 ¥', async () => {
+    await page.selectOption('#setup-local', 'JPY');
+    await page.selectOption('#setup-home', 'KWD');
+    await page.fill('#setup-start', isoDay(0));
+    await page.fill('#setup-end', isoDay(6));
+    await page.tap('#setup-go');
+    await page.waitForSelector('#view-home.active');
+    await page.waitForFunction(() => /Cambio mancante/.test(document.querySelector('#rate-chip').textContent));
+    await page.tap('#rate-chip');
+    await page.fill('#rate-input', '325');
+    await page.tap('#rate-form button[type="submit"]');
+    assert.match(await text(page, '#rate-info'), /1 KWD = 325,00 ¥/);
+  });
+
+  await step('spesa in yen e spesa in dinari con 3 decimali: totali ¥1.401 e KWD 4,312', async () => {
+    await page.tap('.tabs [data-view="home"]');
+    assert.equal(await text(page, '#cur-toggle'), '¥');
+    await add(['1', '0', '0', '0'], 'cibo');
+    await page.tap('#cur-toggle');
+    assert.equal(await text(page, '#cur-toggle'), 'KWD');
+    await add(['1', ',', '2', '3', '5'], 'attivita');
+    assert.deepEqual((await stored(page, 'cdv.expenses')).map((e) => [e.amount, e.currency]).sort((x, y) => x[1].localeCompare(y[1])), [[1000, 'JPY'], [1.235, 'KWD']]);
+    // 1.000 ¥ = 3,0769 KWD; 1,235 KWD = 401,375 ¥
+    assert.equal(await text(page, '#spent-local'), '¥1.401');
+    assert.equal(await text(page, '#spent-home'), 'KWD 4,312');
+  });
+
+  await step('voce in dinari (2,345 KWD) riaperta e salvata senza cambiarla: resta 2,345', async () => {
+    await page.tap('.tabs [data-view="trip"]');
+    await page.tap('#plan-add');
+    await page.tap('#plan-kinds [data-kind="volo"]');
+    await page.tap('#plan-cur [data-cur="KWD"]');
+    await page.fill('#plan-amount', '2,345');
+    await page.tap('#plan-paid [data-paid="1"]');
+    await page.tap('#plan-save');
+    assert.equal((await stored(page, 'cdv.plan'))[0].amount, 2.345);
+    await page.tap('#plan-list [data-plan-edit]');
+    assert.equal(await page.locator('#plan-amount').inputValue(), '2,345');
+    await page.tap('#plan-save');
+    assert.equal((await stored(page, 'cdv.plan'))[0].amount, 2.345);
+  });
+
+  await step('spesa in dinari corretta dal riepilogo: il tastierino riparte da 1,235, salvata resta 1,235', async () => {
+    await page.tap('.tabs [data-view="summary"]');
+    const kwd = (await stored(page, 'cdv.expenses')).find((e) => e.currency === 'KWD');
+    await page.tap(`[data-edit="${kwd.id}"]`);
+    await page.tap('#edit-amount');
+    assert.equal(await text(page, '#amount'), '1,235');
+    await page.tap('#done');
+    assert.equal((await stored(page, 'cdv.expenses')).find((e) => e.id === kwd.id).amount, 1.235);
+  });
+
+  await step('CSV: yen senza decimali e dinari con 3, gli stessi numeri del riepilogo', async () => {
+    await page.tap('.tabs [data-view="summary"]');
+    const s = await text(page, '#summary');
+    assert.match(s, /Totale\s*¥1\.401\s*KWD 4,312/i, s);
+    assert.match(s, /KWD 1,235\s*¥401/, s);
+    assert.match(s, /KWD 2,345\s*¥762/, s);
+    const rows = await csvRows();
+    const row = (re) => rows.find((r) => re.test(r.join(';'))).slice(7, 11).join(';');
+    assert.equal(row(/;spesa;Cibo;/), '1000;JPY;1000;3,077');
+    assert.equal(row(/;spesa;Attività;/), '1,235;KWD;401;1,235');
+    assert.equal(row(/;viaggio;Volo;/), '2,345;KWD;762;2,345');
+    for (const r of rows) {
+      assert.match(r[9], /^\d+$/, `importo_JPY senza decimali: ${r.join(';')}`);
+      assert.match(r[10], /^\d+,\d{3}$/, `importo_KWD con 3 decimali: ${r.join(';')}`);
+    }
+    // somma delle spese nel CSV = totale del riepilogo (KWD 4,312)
+    const sum = rows.filter((r) => r[2] === 'spesa').reduce((t, r) => t + Number(r[10].replace(',', '.')), 0);
+    assert.equal(sum.toFixed(3), '4.312');
+  });
+
+  await step('nessun errore JavaScript', async () => assert.deepEqual(errors, []));
   await context.close();
 }
 

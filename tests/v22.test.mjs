@@ -103,7 +103,7 @@ test('viaggio in Giappone (JPY/EUR): spese in 3 passi con gli importi rapidi in 
   // CSV con le colonne del viaggio
   const csv = C.toCSVAll({ expenses: list, plan: [], settings: s }, [], fx).trim().split('\r\n');
   assert.equal(csv[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_EUR;JPY_per_EUR;modalita;piano');
-  assert.ok(csv.includes('2027-03-08;;spesa;Attività;Kyoto;pagato;;30,00;EUR;4875,00;30,00;162,50;reale;'), csv.join('\n'));
+  assert.ok(csv.includes('2027-03-08;;spesa;Attività;Kyoto;pagato;;30,00;EUR;4875;30,00;162,50;reale;'), csv.join('\n'));
   // nessuna traccia di altri paesi o valute nei dati di questo viaggio
   assert.doesNotMatch(JSON.stringify([s, list]), /THB|฿|thb/i);
   // e la migrazione (riapertura dell'app) non cambia niente

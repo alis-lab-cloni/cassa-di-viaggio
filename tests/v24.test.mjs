@@ -192,9 +192,70 @@ test('CSV: con un\'altra valuta una colonna in più con il suo tasso; senza, col
   const e = C.makeExpense({ amount: 14000, currency: 'KRW', category: 'trasporti', rate: 150, xrate: 1400 });
   const csv = C.toCSV({ expenses: [e], plan: [], settings: { stages: [] } }, FX).replace(/^﻿/, '').split(/\r\n/);
   assert.equal(csv[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_USD;JPY_per_USD;modalita;piano;valuta_per_USD');
-  assert.match(csv[1], /;14000,00;KRW;1500,00;10,00;150,00;reale;;1400,00$/);
+  assert.match(csv[1], /;14000;KRW;1500;10,00;150,00;reale;;1400,00$/);
   const fx2 = { local: 'JPY', home: 'USD', rate: 150, extra: [], rates: {} };
   assert.deepEqual(C.csvHeader(fx2), C23.csvHeader({ local: 'JPY', home: 'USD', rate: 150 }));
+});
+
+// MAN-425 (FAIL di MAN-424): i controvalori del CSV avevano sempre 2 decimali (KWD 0,31 nel CSV e 0,308 nel riepilogo,
+// JPY 151,52 contro ¥152). Ora ogni colonna ha i decimali della sua valuta, come il riepilogo.
+const uiNumber = (s) => s.replace(/[^\d,-]/g, ''); // "KWD 0,308" -> "0,308", "¥1.234" -> "1234"
+const csvLine = (set, fx) => C.toCSV({ plan: [], settings: { stages: [] }, ...set }, fx).trim().split('\r\n').slice(1).map((l) => l.split(';'));
+
+test('CSV: controvalori con i decimali della valuta di riferimento, uguali al riepilogo (KWD 3, JPY 0)', () => {
+  // il comando di riproduzione del rapporto di MAN-424
+  for (const [home, rate, csv] of [['KWD', 3.25, '0,308'], ['JPY', 0.0066, '152']]) {
+    const fx = { local: 'USD', home, rate, extra: [], rates: {} };
+    const e = C.makeExpense({ amount: 1, currency: 'USD', category: 'cibo', rate, day: '2026-11-23' });
+    const h = C.expenseValue(e, fx).home;
+    const row = csvLine({ expenses: [e] }, fx)[0];
+    assert.equal(row[10], csv, home);
+    assert.equal(row[10], uiNumber(C.makeFormat(fx).home(h)), `${home}: CSV uguale al riepilogo`);
+    assert.equal(row[9], '1,00');
+  }
+});
+
+test('CSV: controvalori con i decimali della valuta locale, anche per voci e altre valute (KWD 3, JPY 0, KRW 0)', () => {
+  // valuta locale KWD, riferimento JPY, un'altra valuta (USD); spesa, voce pagata e voce prevista
+  const fx = { local: 'KWD', home: 'JPY', rate: 0.00205, extra: ['USD'], rates: { USD: 0.0066 } };
+  const e = C.makeExpense({ amount: 3.5, currency: 'USD', category: 'cibo', rate: fx.rate, xrate: 0.0066, day: '2026-11-23' });
+  const v = C.makePlanItem({ kind: 'volo', amount: 1.235, currency: 'KWD', paid: true, rate: fx.rate });
+  const p = C.makePlanItem({ kind: 'treno', amount: 9999, currency: 'JPY', paid: false });
+  const rows = csvLine({ expenses: [e], plan: [v, p] }, fx);
+  assert.equal(rows.length, 3);
+  const f = C.makeFormat(fx);
+  const values = [C.expenseValue(e, fx), C.planValue(v, fx), C.planValue(p, fx)];
+  for (const [i, row] of rows.entries()) {
+    assert.match(row[9], /^\d+,\d{3}$/, `importo_KWD con 3 decimali: ${row.join(';')}`);
+    assert.match(row[10], /^\d+$/, `importo_JPY senza decimali: ${row.join(';')}`);
+    assert.equal(row[10], uiNumber(f.home(values[i].home)));
+  }
+  const byAmount = Object.fromEntries(rows.map((r) => [r[8], r]));
+  assert.deepEqual(byAmount.KWD.slice(7, 11), ['1,235', 'KWD', '1,235', '602']);
+  assert.deepEqual(byAmount.JPY.slice(7, 11), ['9999', 'JPY', '20,498', '9999']);
+  assert.deepEqual(byAmount.USD.slice(7, 11), ['3,50', 'USD', '1,087', '530']);
+  // won: nessun decimale né nell'importo né nel controvalore
+  const krw = { local: 'KRW', home: 'EUR', rate: 1500, extra: [], rates: {} };
+  const k = C.makeExpense({ amount: 12345, currency: 'KRW', category: 'cibo', rate: 1500 });
+  assert.deepEqual(csvLine({ expenses: [k] }, krw)[0].slice(7, 11), ['12345', 'KRW', '12345', '8,23']);
+});
+
+test('CSV: importo con i decimali della sua valuta; i centesimi salvati in una valuta senza decimali restano', () => {
+  const fx = { local: 'JPY', home: 'EUR', rate: 160, extra: [], rates: {} };
+  const row = (amount, currency) => csvLine({ expenses: [{ ...C.makeExpense({ amount: 1, currency, category: 'cibo', rate: 160 }), amount }] }, fx)[0][7];
+  assert.equal(row(1000, 'JPY'), '1000');
+  assert.equal(row(1000.5, 'JPY'), '1000,50'); // dato di una versione vecchia: il valore non cambia
+  assert.equal(row(12.5, 'EUR'), '12,50');
+  assert.equal(row(12, 'EUR'), '12,00');
+});
+
+test('importo da modificare con i decimali con cui è salvato: il dinaro kuwaitiano non perde il terzo decimale', () => {
+  assert.equal(C.amountToInput(1.235, 'KWD'), '1,235');
+  assert.equal(C.amountToInput(1.5, 'KWD'), '1,500');
+  assert.equal(C.amountToInput(3.5, 'EUR'), '3,50');
+  assert.equal(C.amountToInput(3.5), '3,50');
+  assert.equal(C.amountToInput(1500, 'JPY'), '1500');
+  assert.equal(C.parseAmount(C.amountToInput(1.235, 'KWD'), 'KWD'), 1.235);
 });
 
 // ---- Migrazione v2.3 → v2.4 con la fixture reale ----

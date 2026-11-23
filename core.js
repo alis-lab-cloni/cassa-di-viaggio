@@ -886,10 +886,16 @@ function csvCell(v) {
   return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// Controvalore con i decimali della valuta della colonna, come nel riepilogo (yen 0, euro 2, dinaro kuwaitiano 3).
 // Valori non calcolabili (riga senza tasso) restano vuoti nel CSV.
-const num2 = (n) => (Number.isFinite(n) ? n.toFixed(2).replace('.', ',') : '');
-// L'importo inserito con i decimali della sua valuta, almeno 2 (dinaro kuwaitiano 3).
-const numAmount = (n, code) => (Number.isFinite(n) ? n.toFixed(Math.max(2, currencyDigits(code))).replace('.', ',') : '');
+const numValue = (n, code) => (Number.isFinite(n) ? n.toFixed(currencyDigits(code)).replace('.', ',') : '');
+// L'importo inserito con i decimali della sua valuta (yen 0, euro 2, dinaro kuwaitiano 3); un importo salvato con
+// i centesimi in una valuta senza decimali (dati di versioni vecchie) li tiene, per non cambiare il valore.
+const numAmount = (n, code) => {
+  if (!Number.isFinite(n)) return '';
+  const d = currencyDigits(code);
+  return n.toFixed(d < 2 && Math.round(n * 10 ** d) / 10 ** d !== n ? 2 : d).replace('.', ',');
+};
 const numRate = (n) => (Number.isFinite(n) && n > 0 ? String(n >= 1 ? n.toFixed(2) : Number(n.toPrecision(6))).replace('.', ',') : '');
 
 // Le colonne delle conversioni portano i codici delle valute del viaggio (es. importo_JPY, importo_EUR, JPY_per_EUR).
@@ -940,7 +946,7 @@ function csvRows(set, fx, mode, name) {
         cells: [
           e.day, dayKey(new Date(e.ts)) === e.day ? time(e.ts) : '', 'spesa', categoryById(e.category).label,
           stageCell(e.stage), 'pagato', '',
-          numAmount(e.amount, e.currency), e.currency, num2(v.local), num2(v.home), numRate(fx.local === fx.home ? 1 : e.rate), mode, name,
+          numAmount(e.amount, e.currency), e.currency, numValue(v.local, fx.local), numValue(v.home, fx.home), numRate(fx.local === fx.home ? 1 : e.rate), mode, name,
           ...extraCell(e.currency, e.xrate),
         ],
       };
@@ -953,7 +959,7 @@ function csvRows(set, fx, mode, name) {
         cells: [
           dayKey(new Date(p.ts)), time(p.ts), 'viaggio', (planKindById(p.kind) || { label: p.kind }).label,
           stageCell(p.stage), p.paid ? 'pagato' : 'previsto', p.label || '',
-          numAmount(p.amount, p.currency), p.currency, num2(v.local), num2(v.home), numRate(fx.local === fx.home ? 1 : planRate(p, fx)), mode, name,
+          numAmount(p.amount, p.currency), p.currency, numValue(v.local, fx.local), numValue(v.home, fx.home), numRate(fx.local === fx.home ? 1 : planRate(p, fx)), mode, name,
           ...extraCell(p.currency, planXRate(p, fx)),
         ],
       };
@@ -1269,7 +1275,8 @@ export function formatKeypad(s) {
   return d === undefined ? grouped : grouped + ',' + d;
 }
 
-// Importo in forma modificabile per i campi di testo: 120 -> "120", 3.5 -> "3,50".
-export function amountToInput(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace('.', ',');
+// Importo in forma modificabile per i campi di testo: 120 -> "120", 3.5 -> "3,50", 1.235 KWD -> "1,235".
+// I decimali sono quelli con cui l'importo è salvato: almeno 2, 3 per le valute che ne hanno 3.
+export function amountToInput(n, code) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(Math.max(2, code ? currencyDigits(code) : 2)).replace('.', ',');
 }

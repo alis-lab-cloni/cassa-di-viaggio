@@ -366,7 +366,7 @@ function renderSetup() {
     if (!$('setup-end').value) $('setup-end').value = s.trip.end;
   }
   if (s.budget && !$('setup-budget').value) {
-    $('setup-budget').value = amountToInput(s.budget.amount);
+    $('setup-budget').value = amountToInput(s.budget.amount, s.budget.currency);
     setupBudgetCur = s.budget.currency;
     setupBudgetPicked = true;
   }
@@ -825,7 +825,7 @@ function startFix() {
   showView('home');
   dismissToast();
   state.fix = { id: exp.id, currency: exp.currency };
-  state.amount = amountToInput(exp.amount);
+  state.amount = amountToInput(exp.amount, exp.currency);
   state.fresh = true; // la prima cifra sostituisce l'importo vecchio
   state.quick = null;
   state.category = exp.category;
@@ -982,7 +982,7 @@ function openPlan(id = null) {
   planForm.paid = p ? p.paid : false;
   $('plan-title').textContent = p ? 'Modifica voce del viaggio' : 'Nuova voce del viaggio';
   $('plan-label').value = p ? p.label : '';
-  $('plan-amount').value = p ? amountToInput(p.amount) : '';
+  $('plan-amount').value = p ? amountToInput(p.amount, p.currency) : '';
   renderPlanStageSelect();
   $('plan-stage').value = p ? (stageById(stages(), p.stage) ? p.stage : '') : defaultPlanStage();
   $('plan-stage-new').value = '';
@@ -1258,7 +1258,7 @@ function renderSettings() {
   budgetCur = b ? b.currency : budgetCur && [cur().local, cur().home].includes(budgetCur) ? budgetCur : cur().local;
   renderCurSeg($('budget-cur'), budgetCur);
   if (document.activeElement !== $('budget-input')) {
-    $('budget-input').value = b ? amountToInput(b.amount) : '';
+    $('budget-input').value = b ? amountToInput(b.amount, b.currency) : '';
   }
   renderBudgetHint();
   renderRateInfo();
