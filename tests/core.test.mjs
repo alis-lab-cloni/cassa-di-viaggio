@@ -227,8 +227,8 @@ test('CSV: intestazione con le valute del viaggio, separatore ";", virgola decim
   const csv = C.toCSV({ expenses: [a, b], plan: [], settings: { stages } }, JP);
   const lines = csv.trim().split('\r\n');
   assert.equal(lines[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_EUR;JPY_per_EUR;modalita;piano');
-  assert.equal(lines[1], '2026-11-27;08:00;spesa;Attività;;pagato;;2,50;EUR;400,00;2,50;160,00;reale;');
-  assert.equal(lines[2], '2026-11-28;12:05;spesa;Cibo;Kyoto;pagato;;1200,00;JPY;1200,00;7,50;160,00;reale;');
+  assert.equal(lines[1], '2026-11-27;08:00;spesa;Attività;;pagato;;2,50;EUR;400;2,50;160,00;reale;');
+  assert.equal(lines[2], '2026-11-28;12:05;spesa;Cibo;Kyoto;pagato;;1200;JPY;1200;7,50;160,00;reale;');
   assert.equal(lines.length, 3);
 });
 
@@ -268,7 +268,7 @@ test('senza tasso nessuna conversione inventata', () => {
   // budget nella valuta di casa con spese locali senza tasso: stato non calcolabile, nessun rosso finto
   assert.equal(C.dayBudget(C.totals([e], fx), { amount: 30, currency: 'EUR' }, fx).level, 'none');
   const csv = C.toCSV({ expenses: [e], plan: [] }, fx).split('\r\n')[1].split(';');
-  assert.deepEqual(csv.slice(9, 12), ['1000,00', '', '']);
+  assert.deepEqual(csv.slice(9, 12), ['1000', '', '']);
 });
 
 test('il primo tasso vero completa le spese registrate senza tasso', () => {

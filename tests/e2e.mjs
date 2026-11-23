@@ -13,11 +13,12 @@ import { launchFirefox } from './lib/firefox.mjs';
 const PORT = Number(process.env.E2E_PORT) || 8765;
 const BASE = `http://localhost:${PORT}/`;
 const SHOTS = fileURLToPath(new URL('../screenshots/', import.meta.url));
-const APP = fileURLToPath(new URL('../', import.meta.url)); // la versione attuale (2.3.0), nella radice del repository
+const APP = fileURLToPath(new URL('../', import.meta.url)); // la versione attuale (2.4.0), nella radice del repository
 const APP_V21 = fileURLToPath(new URL('./fixtures/app-v2.1.0/', import.meta.url)); // copia esatta della v2.1.0 pubblicata (2327f8d)
 const APP_V22 = fileURLToPath(new URL('./fixtures/app-v2.2.0/', import.meta.url)); // copia esatta della v2.2.0 pubblicata (cb443f6)
+const APP_V23 = fileURLToPath(new URL('./fixtures/app-v2.3.0/', import.meta.url)); // copia esatta della v2.3.0 pubblicata (4f2157c)
 const DOWNLOADS = mkdtempSync(join(tmpdir(), 'cdv-e2e-download-'));
-const CACHE = 'cassa-di-viaggio-v2.3.0';
+const CACHE = 'cassa-di-viaggio-v2.4.0';
 const NO_DEST = 'Destinazione non indicata';
 mkdirSync(SHOTS, { recursive: true });
 
@@ -58,7 +59,10 @@ async function newPhone(viewport) {
     const local = u.searchParams.get('symbols');
     return { amount: 1, base: home, date: '2026-11-16', rates: { [local]: RATES[`${local}/${home}`] } };
   });
-  await page.route('open.er-api.com', () => ({ result: 'success', time_last_update_unix: 1794787200, rates: { THB: 38, JPY: 162.5, EUR: 1 } }));
+  // er-api simulato solo con base EUR (come nei test precedenti); per le altre basi risponde con un errore
+  await page.route('open.er-api.com', (u) => (u.pathname.endsWith('/EUR')
+    ? { result: 'success', time_last_update_unix: 1794787200, rates: { THB: 38, JPY: 162.5, EUR: 1 } }
+    : { result: 'error', 'error-type': 'unsupported-code' }));
   // gli errori di rete simulati (modalità aereo) non sono errori JavaScript: page.errors li esclude già
   return { context: page, page, external: page.external, errors: page.errors, net: page.net };
 }
@@ -87,7 +91,7 @@ async function waitCache(page, name) {
 }
 
 // ============ Aggiornamento v2.1.0 → v2.2 con i dati del viaggio già in corso ============
-console.log('\nAggiornamento dalla v2.1.0 pubblicata alla v2.2 (stesso indirizzo, senza reinstallare)');
+console.log('\nAggiornamento dalla v2.1.0 pubblicata alla versione attuale (stesso indirizzo, senza reinstallare)');
 {
   server.setRoot(APP_V21);
   const { context, page, errors } = await newPhone(DEVICES[0].viewport);
@@ -133,7 +137,7 @@ console.log('\nAggiornamento dalla v2.1.0 pubblicata alla v2.2 (stesso indirizzo
     assert.deepEqual(JSON.parse(before['cdv.settings']).trip, { start: '2026-11-28', end: '2027-01-02' });
   });
 
-  await step('pubblico la v2.2 allo stesso indirizzo: il service worker nuovo sostituisce la cache v2.1.0', async () => {
+  await step('pubblico la versione attuale allo stesso indirizzo: il service worker nuovo sostituisce la cache v2.1.0', async () => {
     server.setRoot(APP);
     await page.reload();
     assert.deepEqual(await waitCache(page, CACHE), [CACHE]);
@@ -147,7 +151,7 @@ console.log('\nAggiornamento dalla v2.1.0 pubblicata alla v2.2 (stesso indirizzo
   });
 
   await step('migrazione: ogni spesa e voce della v2.1.0 c\'è, identica (importo, valuta, giorno, categoria, tappa)', async () => {
-    assert.equal(await page.evaluate(() => localStorage.getItem('cdv.schema')), '4');
+    assert.equal(await page.evaluate(() => localStorage.getItem('cdv.schema')), '5');
     const pick = (r) => ({ id: r.id, amount: r.amount, currency: r.currency, day: r.day, category: r.category, stage: r.stage ?? null });
     const old = JSON.parse(before['cdv.expenses']).map(pick).sort((a, b) => a.id.localeCompare(b.id));
     const now = (await stored(page, 'cdv.expenses')).map(pick).sort((a, b) => a.id.localeCompare(b.id));
@@ -246,6 +250,14 @@ console.log('\nPrimo avvio senza dati: configurazione guidata e viaggio in Giapp
     await page.tap('#setup-go');
     assert.match(await text(page, '#setup-msg'), /valuta locale/);
     assert.equal(await page.locator('#setup').isVisible(), true);
+  });
+
+  await step('v2.4: nessuna valuta di riferimento preimpostata (né EUR né altre)', async () => {
+    assert.equal(await page.locator('#setup-home').inputValue(), '');
+    await page.selectOption('#setup-local', 'JPY');
+    await page.tap('#setup-go');
+    assert.match(await text(page, '#setup-msg'), /valuta di riferimento/);
+    await page.selectOption('#setup-local', '');
   });
 
   await step('configurazione: nome, destinazione, JPY/EUR, date e budget del giorno in yen', async () => {
@@ -406,7 +418,7 @@ console.log('\nAggiornamento dalla v2.2.0 pubblicata: voci «Senza tappa» con u
     assert.deepEqual(rows.map((r) => r.stage), [null, null]);
   });
 
-  await step('pubblico la v2.3: la cache passa alla v2.3.0', async () => {
+  await step(`pubblico la versione attuale: la cache passa a ${CACHE}`, async () => {
     server.setRoot(APP);
     await page.reload();
     assert.deepEqual(await waitCache(page, CACHE), [CACHE]);
@@ -593,6 +605,377 @@ console.log('\nDestinazione delle voci: nessuna tappa, una tappa, più tappe, vo
   await context.close();
 }
 
+// ============ v2.4: aggiornamento dalla v2.3.0 con un viaggio EUR/THB in corso ============
+console.log('\nAggiornamento dalla v2.3.0 pubblicata: viaggio THB/EUR identico nei totali dopo la migrazione');
+{
+  server.setRoot(APP_V23);
+  const { context, page, errors } = await newPhone(DEVICES[0].viewport);
+  await page.goto(BASE);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const add = async (keys, cat) => {
+    for (const k of keys) await tapKey(page, k);
+    await page.tap(`#cats [data-cat="${cat}"]`);
+    await page.tap('#done');
+  };
+  const screens = async () => {
+    const out = {};
+    await page.tap('.tabs [data-view="home"]');
+    out.home = await text(page, '#budget-card');
+    await page.tap('.tabs [data-view="trip"]');
+    out.trip = await text(page, '#trip-summary');
+    out.plan = await text(page, '#plan-list');
+    await page.tap('.tabs [data-view="summary"]');
+    out.summary = await text(page, '#summary');
+    await page.tap('.tabs [data-view="settings"]');
+    out.csv = readFileSync(await page.download(() => page.tap('#export'), DOWNLOADS), 'utf8');
+    await page.tap('.tabs [data-view="home"]');
+    return out;
+  };
+  let before;
+  let shown;
+  await step('v2.3.0: viaggio THB/EUR con tappe, spese nelle due valute, tasso corretto a mano, voci e un piano', async () => {
+    assert.equal(await page.evaluate(async () => (await caches.keys()).join()), 'cassa-di-viaggio-v2.3.0');
+    await page.fill('#setup-dest', 'Bangkok e dintorni');
+    await page.selectOption('#setup-local', 'THB');
+    await page.selectOption('#setup-home', 'EUR');
+    await page.fill('#setup-start', isoDay(-2));
+    await page.fill('#setup-end', isoDay(12));
+    await page.fill('#setup-budget', '2500');
+    await page.tap('#setup-go');
+    await page.waitForFunction(() => document.querySelector('#rate-chip').textContent.includes('38,00'));
+    await page.tap('.tabs [data-view="settings"]');
+    await page.fill('#stage-name', 'Bangkok');
+    await page.tap('#stage-save');
+    await page.fill('#stage-name', 'Chiang Mai');
+    await page.tap('#stage-save');
+    await page.tap('.tabs [data-view="home"]');
+    await add(['3', '5', '0'], 'cibo');
+    await add(['1', '2', '5', '0', ',', '5'], 'alloggio');
+    await page.tap('#cur-toggle');
+    await add(['1', '2', ',', '9'], 'attivita');
+    await page.tap('#cur-toggle');
+    await page.tap('.tabs [data-view="settings"]');
+    await page.fill('#rate-input', '37,9');
+    await page.tap('#rate-form button[type="submit"]');
+    await page.tap('.tabs [data-view="home"]');
+    const st = (await stored(page, 'cdv.settings')).stages;
+    await page.tap(`#stages [data-stage="${st[1].id}"]`);
+    await add(['9', '9'], 'spesa');
+    await page.tap('.tabs [data-view="trip"]');
+    await page.tap('#plan-add');
+    await page.fill('#plan-label', 'andata e ritorno');
+    await page.fill('#plan-amount', '845,4');
+    await page.tap('#plan-paid [data-paid="1"]');
+    await page.tap('#plan-save');
+    await page.tap('#plan-add');
+    await page.tap('#plan-kinds [data-kind="alloggio"]');
+    await page.fill('#plan-amount', '6400');
+    await page.tap('#plan-cur [data-cur="THB"]');
+    await page.tap('#plan-save');
+    await page.tap('#scenario-copy');
+    await page.tap('#scenario-exit');
+    before = await rawStorage(page);
+    assert.equal(before['cdv.schema'], '4');
+    assert.equal(JSON.parse(before['cdv.expenses']).length, 4);
+    shown = await screens();
+    assert.match(shown.summary, /Chiang Mai/);
+  });
+
+  await step('pubblico la v2.4 allo stesso indirizzo: la cache passa a cassa-di-viaggio-v2.4.0', async () => {
+    server.setRoot(APP);
+    await page.reload();
+    assert.deepEqual(await waitCache(page, CACHE), [CACHE]);
+    await page.reload();
+    await page.waitForSelector('#view-home.active');
+    assert.equal(await page.locator('#setup').isVisible(), false);
+  });
+
+  await step('migrazione v2.3 → v2.4: schema 5, spese, voci e piano identici campo per campo', async () => {
+    assert.equal(await page.evaluate(() => localStorage.getItem('cdv.schema')), '5');
+    assert.deepEqual(await stored(page, 'cdv.expenses'), JSON.parse(before['cdv.expenses']));
+    assert.deepEqual(await stored(page, 'cdv.plan'), JSON.parse(before['cdv.plan']));
+    assert.deepEqual(await stored(page, 'cdv.piani'), JSON.parse(before['cdv.piani']));
+    const s = await stored(page, 'cdv.settings');
+    assert.deepEqual(s, { ...JSON.parse(before['cdv.settings']), extraCurrencies: [], extraRates: {} });
+  });
+
+  await step('migrazione v2.3 → v2.4: copia di sicurezza dei dati v2.3 com\'erano in cdv.backup-v4', async () => {
+    const backup = await stored(page, 'cdv.backup-v4');
+    assert.ok(backup, 'copia di sicurezza assente');
+    // la copia ha i valori di localStorage com'erano (stringhe), con i nomi dei campi di loadData()
+    const names = { schema: 'cdv.schema', expenses: 'cdv.expenses', settings: 'cdv.settings', plan: 'cdv.plan', scenarios: 'cdv.piani' };
+    for (const [k, key] of Object.entries(names)) assert.equal(backup[k], before[key], key);
+    assert.equal(backup.version, '2.2.0/2.3.0');
+  });
+
+  await step('stessi totali di prima su Oggi, Viaggio, Riepilogo e nel CSV esportato (identico)', async () => {
+    const now = await screens();
+    for (const k of ['home', 'trip', 'plan', 'summary']) assert.equal(now[k], shown[k], k);
+    assert.equal(now.csv, shown.csv);
+  });
+
+  await step('nessun errore JavaScript', async () => assert.deepEqual(errors, []));
+  await context.close();
+}
+
+// ============ v2.4: valute libere, viaggio in yen con riferimento in dollari, offline ============
+console.log('\nValute libere: viaggio in Giappone (JPY) con riferimento in dollari (USD), spesa in won (KRW), cambi a mano, offline');
+{
+  server.setRoot(APP);
+  const { context, page, errors } = await newPhone(DEVICES[0].viewport);
+  await page.goto(BASE);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const add = async (keys, cat) => {
+    for (const k of keys) await tapKey(page, k);
+    await page.tap(`#cats [data-cat="${cat}"]`);
+    await page.tap('#done');
+  };
+
+  await step('configurazione con la ricerca delle valute per nome e per codice (yen → JPY, usd → USD)', async () => {
+    await page.fill('#setup-name', 'Giappone e Corea');
+    await page.fill('#setup-local-q', 'yen');
+    assert.equal(await page.locator('#setup-local').inputValue(), 'JPY');
+    await page.fill('#setup-home-q', 'usd');
+    assert.equal(await page.locator('#setup-home').inputValue(), 'USD');
+    await page.fill('#setup-home-q', 'zzz');
+    assert.match(await page.evaluate(() => document.querySelector('#setup-home').options[0].text), /Nessuna valuta per «zzz»/);
+    await page.fill('#setup-home-q', 'dollaro statunitense');
+    assert.equal(await page.locator('#setup-home').inputValue(), 'USD');
+    await page.fill('#setup-start', isoDay(0));
+    await page.fill('#setup-end', isoDay(9));
+    await page.tap('#setup-go');
+    await page.waitForSelector('#view-home.active');
+    const s = await stored(page, 'cdv.settings');
+    assert.deepEqual(s.currencies, { local: 'JPY', home: 'USD' });
+    assert.deepEqual(s.extraCurrencies, []);
+    // il servizio del cambio (simulato) non ha la coppia JPY/USD: nessun cambio inventato
+    await page.waitForFunction(() => /Cambio mancante/.test(document.querySelector('#rate-chip').textContent));
+  });
+
+  await step('cambio principale scritto a mano: 1 $ = 150 ¥', async () => {
+    await page.tap('#rate-chip');
+    await page.fill('#rate-input', '150');
+    await page.tap('#rate-form button[type="submit"]');
+    assert.match(await text(page, '#rate-info'), /1 \$ = 150,00 ¥/);
+  });
+
+  await step('da qui senza rete (modalità aereo): cerco «won» e aggiungo KRW, cambio a mano 1 $ = 1.400 ₩', async () => {
+    await page.setOffline(true);
+    await page.fill('#extra-q', 'won');
+    const found = await page.evaluate(() => [...document.querySelectorAll('#extra-cur option')].map((o) => o.value).filter(Boolean));
+    assert.deepEqual(found.sort(), ['KPW', 'KRW']);
+    await page.fill('#extra-q', 'sudcoreano');
+    assert.equal(await page.locator('#extra-cur').inputValue(), 'KRW');
+    await page.tap('#extra-add');
+    assert.deepEqual((await stored(page, 'cdv.settings')).extraCurrencies, ['KRW']);
+    assert.match(await text(page, '#extra-list'), /won sudcoreano \(KRW\)[\s\S]*manca il cambio/i);
+    await page.fill('#xrate-KRW', '1.400');
+    await page.tap('[data-xrate-form="KRW"] button[type="submit"]');
+    const r = (await stored(page, 'cdv.settings')).extraRates.KRW;
+    assert.equal(r.value, 1400);
+    assert.equal(r.base, 'USD');
+    assert.equal(r.mode, 'manual');
+    assert.match(await text(page, '#extra-list'), /1 \$ = 1\.400,00 ₩/);
+    await page.screenshot({ path: SHOTS + 'impostazioni-altre-valute.png', fullPage: true });
+  });
+
+  await step('Oggi: il tasto valuta passa da ¥ a $ a ₩; in won la virgola non c\'è (0 decimali)', async () => {
+    await page.tap('.tabs [data-view="home"]');
+    assert.equal(await text(page, '#cur-toggle'), '¥');
+    await page.tap('#cur-toggle');
+    assert.equal(await text(page, '#cur-toggle'), '$');
+    await page.tap('#cur-toggle');
+    assert.equal(await text(page, '#cur-toggle'), '₩');
+    assert.equal(await page.evaluate(() => document.querySelector('#keypad [data-k=","]').disabled), true);
+    for (const k of ['1', '4', '0', '0', '0']) await tapKey(page, k);
+    assert.equal(await text(page, '#amount'), '14.000');
+    assert.match(await text(page, '#amount-conv'), /≈ ¥1\.500/);
+    await page.tap('#cats [data-cat="trasporti"]');
+    await page.tap('#done');
+    const [e] = await stored(page, 'cdv.expenses');
+    assert.deepEqual([e.amount, e.currency, e.rate, e.xrate], [14000, 'KRW', 150, 1400]);
+    await page.screenshot({ path: SHOTS + 'oggi-altra-valuta.png' });
+  });
+
+  await step('spese in yen (0 decimali) e in dollari: totali di oggi in yen e dollari', async () => {
+    await page.tap('#cur-toggle');
+    assert.equal(await text(page, '#cur-toggle'), '¥');
+    assert.equal(await page.evaluate(() => document.querySelector('#keypad [data-k=","]').disabled), true);
+    await add(['3', '0', '0', '0'], 'cibo');
+    await page.tap('#cur-toggle');
+    assert.equal(await page.evaluate(() => document.querySelector('#keypad [data-k=","]').disabled), false);
+    await add(['1', '5'], 'attivita');
+    // 14.000 ₩ = 10 $ = 1.500 ¥; 3.000 ¥ = 20 $; 15 $ = 2.250 ¥
+    assert.equal(await text(page, '#spent-local'), '¥6.750');
+    assert.equal(await text(page, '#spent-home'), '$45,00');
+  });
+
+  await step('voce del viaggio in won già pagata: in Viaggio con il controvalore in yen', async () => {
+    await page.tap('.tabs [data-view="trip"]');
+    await page.tap('#plan-add');
+    await page.tap('#plan-kinds [data-kind="traghetto"]');
+    await page.fill('#plan-label', 'Busan–Fukuoka');
+    await page.tap('#plan-cur [data-cur="KRW"]');
+    await page.fill('#plan-amount', '112000');
+    await page.tap('#plan-paid [data-paid="1"]');
+    await page.tap('#plan-save');
+    const [p] = await stored(page, 'cdv.plan');
+    assert.deepEqual([p.amount, p.currency, p.paid, p.rate, p.xrate], [112000, 'KRW', true, 150, 1400]);
+    // 112.000 ₩ = 80 $ = 12.000 ¥
+    assert.match(await text(page, '#plan-list'), /₩112\.000\s*¥12\.000/);
+    assert.match(await text(page, '#trip-speso'), /¥18\.750\s*\$125,00/);
+  });
+
+  await step('Riepilogo: totali e categorie coerenti in yen e dollari, ogni spesa nella sua valuta', async () => {
+    await page.tap('.tabs [data-view="summary"]');
+    const s = await text(page, '#summary');
+    assert.match(s, /Totale\s*¥6\.750\s*\$45,00/i, s);
+    assert.match(s, /Trasporti[\s\S]*¥1\.500\s*\$10,00/i, s);
+    assert.match(s, /₩14\.000\s*¥1\.500/);
+    assert.match(s, /\$15,00\s*¥2\.250/);
+    assert.match(s, /Busan–Fukuoka[\s\S]*₩112\.000\s*¥12\.000/);
+    assert.doesNotMatch(s, /€|EUR|฿|THB|NaN|undefined/);
+    await page.screenshot({ path: SHOTS + 'riepilogo-valute-libere.png', fullPage: true });
+  });
+
+  await step('cambio del won corretto a mano: le spese già registrate restano al loro cambio', async () => {
+    await page.tap('.tabs [data-view="settings"]');
+    await page.fill('#xrate-KRW', '1.250');
+    await page.tap('[data-xrate-form="KRW"] button[type="submit"]');
+    assert.equal((await stored(page, 'cdv.settings')).extraRates.KRW.value, 1250);
+    await page.tap('.tabs [data-view="home"]');
+    assert.equal(await text(page, '#spent-local'), '¥6.750');
+    // l'ultima spesa era in dollari: il tasto riparte da $ (¥ → $ → ₩ → ¥)
+    assert.equal(await text(page, '#cur-toggle'), '$');
+    await page.tap('#cur-toggle');
+    assert.equal(await text(page, '#cur-toggle'), '₩');
+    await add(['2', '5', '0', '0'], 'cibo');
+    // 2.500 ₩ al nuovo cambio = 2 $ = 300 ¥
+    assert.equal(await text(page, '#spent-local'), '¥7.050');
+    assert.equal(await text(page, '#spent-home'), '$47,00');
+  });
+
+  await step('una valuta usata non si toglie; il CSV ha la colonna del cambio delle altre valute', async () => {
+    await page.tap('.tabs [data-view="settings"]');
+    assert.equal(await page.locator('[data-extra-del="KRW"]').count(), 0);
+    const csv = readFileSync(await page.download(() => page.tap('#export'), DOWNLOADS), 'utf8').replace(/^﻿/, '').split(/\r\n/);
+    assert.equal(csv[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_USD;JPY_per_USD;modalita;piano;valuta_per_USD');
+    assert.ok(csv.some((l) => /;spesa;Trasporti;.*;14000;KRW;1500;10,00;150,00;reale;;1400,00$/.test(l)), csv.join('\n'));
+    assert.ok(csv.some((l) => /;spesa;Cibo;.*;3000;JPY;3000;20,00;150,00;reale;;$/.test(l)), csv.join('\n'));
+  });
+
+  await step('sempre offline: l\'app si riapre con valute, cambi a mano e totali', async () => {
+    await page.reload();
+    await page.waitForSelector('#view-home.active');
+    assert.equal(await text(page, '#spent-local'), '¥7.050');
+    assert.equal(await text(page, '#spent-home'), '$47,00');
+    assert.match(await text(page, '#rate-chip'), /150,00/);
+  });
+
+  await step('nessuna richiesta di rete per i cambi delle altre valute', async () => {
+    assert.deepEqual(page.external.filter((r) => /KRW|krw/.test(r)), []);
+  });
+
+  await step('nessun errore JavaScript', async () => assert.deepEqual(errors, []));
+  await page.setOffline(false);
+  await context.close();
+}
+
+// ============ MAN-425: CSV con i decimali di ogni valuta (KWD 3, JPY 0), uguale al riepilogo ============
+console.log('\nDecimali delle valute nel CSV: viaggio in yen (0 decimali) con riferimento in dinari kuwaitiani (3 decimali)');
+{
+  server.setRoot(APP);
+  const { context, page, errors } = await newPhone(DEVICES[0].viewport);
+  await page.goto(BASE);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const add = async (keys, cat) => {
+    for (const k of keys) await tapKey(page, k);
+    await page.tap(`#cats [data-cat="${cat}"]`);
+    await page.tap('#done');
+  };
+  const csvRows = async () => {
+    await page.tap('.tabs [data-view="settings"]');
+    const csv = readFileSync(await page.download(() => page.tap('#export'), DOWNLOADS), 'utf8').replace(/^﻿/, '').trim().split(/\r\n/);
+    assert.equal(csv[0], 'data;ora;tipo;voce;tappa;stato;descrizione;importo;valuta;importo_JPY;importo_KWD;JPY_per_KWD;modalita;piano');
+    return csv.slice(1).map((l) => l.split(';'));
+  };
+
+  await step('configurazione JPY con riferimento KWD e cambio a mano: 1 KWD = 325 ¥', async () => {
+    await page.selectOption('#setup-local', 'JPY');
+    await page.selectOption('#setup-home', 'KWD');
+    await page.fill('#setup-start', isoDay(0));
+    await page.fill('#setup-end', isoDay(6));
+    await page.tap('#setup-go');
+    await page.waitForSelector('#view-home.active');
+    await page.waitForFunction(() => /Cambio mancante/.test(document.querySelector('#rate-chip').textContent));
+    await page.tap('#rate-chip');
+    await page.fill('#rate-input', '325');
+    await page.tap('#rate-form button[type="submit"]');
+    assert.match(await text(page, '#rate-info'), /1 KWD = 325,00 ¥/);
+  });
+
+  await step('spesa in yen e spesa in dinari con 3 decimali: totali ¥1.401 e KWD 4,312', async () => {
+    await page.tap('.tabs [data-view="home"]');
+    assert.equal(await text(page, '#cur-toggle'), '¥');
+    await add(['1', '0', '0', '0'], 'cibo');
+    await page.tap('#cur-toggle');
+    assert.equal(await text(page, '#cur-toggle'), 'KWD');
+    await add(['1', ',', '2', '3', '5'], 'attivita');
+    assert.deepEqual((await stored(page, 'cdv.expenses')).map((e) => [e.amount, e.currency]).sort((x, y) => x[1].localeCompare(y[1])), [[1000, 'JPY'], [1.235, 'KWD']]);
+    // 1.000 ¥ = 3,0769 KWD; 1,235 KWD = 401,375 ¥
+    assert.equal(await text(page, '#spent-local'), '¥1.401');
+    assert.equal(await text(page, '#spent-home'), 'KWD 4,312');
+  });
+
+  await step('voce in dinari (2,345 KWD) riaperta e salvata senza cambiarla: resta 2,345', async () => {
+    await page.tap('.tabs [data-view="trip"]');
+    await page.tap('#plan-add');
+    await page.tap('#plan-kinds [data-kind="volo"]');
+    await page.tap('#plan-cur [data-cur="KWD"]');
+    await page.fill('#plan-amount', '2,345');
+    await page.tap('#plan-paid [data-paid="1"]');
+    await page.tap('#plan-save');
+    assert.equal((await stored(page, 'cdv.plan'))[0].amount, 2.345);
+    await page.tap('#plan-list [data-plan-edit]');
+    assert.equal(await page.locator('#plan-amount').inputValue(), '2,345');
+    await page.tap('#plan-save');
+    assert.equal((await stored(page, 'cdv.plan'))[0].amount, 2.345);
+  });
+
+  await step('spesa in dinari corretta dal riepilogo: il tastierino riparte da 1,235, salvata resta 1,235', async () => {
+    await page.tap('.tabs [data-view="summary"]');
+    const kwd = (await stored(page, 'cdv.expenses')).find((e) => e.currency === 'KWD');
+    await page.tap(`[data-edit="${kwd.id}"]`);
+    await page.tap('#edit-amount');
+    assert.equal(await text(page, '#amount'), '1,235');
+    await page.tap('#done');
+    assert.equal((await stored(page, 'cdv.expenses')).find((e) => e.id === kwd.id).amount, 1.235);
+  });
+
+  await step('CSV: yen senza decimali e dinari con 3, gli stessi numeri del riepilogo', async () => {
+    await page.tap('.tabs [data-view="summary"]');
+    const s = await text(page, '#summary');
+    assert.match(s, /Totale\s*¥1\.401\s*KWD 4,312/i, s);
+    assert.match(s, /KWD 1,235\s*¥401/, s);
+    assert.match(s, /KWD 2,345\s*¥762/, s);
+    const rows = await csvRows();
+    const row = (re) => rows.find((r) => re.test(r.join(';'))).slice(7, 11).join(';');
+    assert.equal(row(/;spesa;Cibo;/), '1000;JPY;1000;3,077');
+    assert.equal(row(/;spesa;Attività;/), '1,235;KWD;401;1,235');
+    assert.equal(row(/;viaggio;Volo;/), '2,345;KWD;762;2,345');
+    for (const r of rows) {
+      assert.match(r[9], /^\d+$/, `importo_JPY senza decimali: ${r.join(';')}`);
+      assert.match(r[10], /^\d+,\d{3}$/, `importo_KWD con 3 decimali: ${r.join(';')}`);
+    }
+    // somma delle spese nel CSV = totale del riepilogo (KWD 4,312)
+    const sum = rows.filter((r) => r[2] === 'spesa').reduce((t, r) => t + Number(r[10].replace(',', '.')), 0);
+    assert.equal(sum.toFixed(3), '4.312');
+  });
+
+  await step('nessun errore JavaScript', async () => assert.deepEqual(errors, []));
+  await context.close();
+}
+
 // ============ Schermi piccoli e grandi: niente esce dallo schermo ============
 console.log('\nSchermi diversi');
 for (const d of DEVICES) {
@@ -602,6 +985,7 @@ for (const d of DEVICES) {
     const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     assert.ok(await noOverflow(), 'configurazione più larga dello schermo');
     await page.selectOption('#setup-local', 'JPY');
+    await page.selectOption('#setup-home', 'EUR');
     await page.fill('#setup-start', isoDay(0));
     await page.fill('#setup-end', isoDay(10));
     await page.tap('#setup-go');

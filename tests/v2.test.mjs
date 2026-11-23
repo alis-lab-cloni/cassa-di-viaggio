@@ -177,9 +177,9 @@ test('CSV v2: spese e voci del viaggio con tipo, voce, tappa, stato e descrizion
   const header = C.csvHeader(FX);
   assert.equal(lines[0], header.join(';'));
   assert.ok(header.includes('tappa') && header.includes('voce') && header.includes('tipo'));
-  assert.equal(lines[1], '2026-10-01;10:00;viaggio;Volo;;pagato;"Andata; A/R ""eco""";780,00;EUR;123240,00;780,00;158,00;reale;');
-  assert.equal(lines[2], '2026-11-02;09:30;viaggio;Treno;Kyoto;previsto;;6000,00;JPY;6000,00;37,50;160,00;reale;');
-  assert.equal(lines[3], '2027-03-20;17:45;spesa;Benessere;Osaka;pagato;;2500,00;JPY;2500,00;15,63;160,00;reale;');
+  assert.equal(lines[1], '2026-10-01;10:00;viaggio;Volo;;pagato;"Andata; A/R ""eco""";780,00;EUR;123240;780,00;158,00;reale;');
+  assert.equal(lines[2], '2026-11-02;09:30;viaggio;Treno;Kyoto;previsto;;6000;JPY;6000;37,50;160,00;reale;');
+  assert.equal(lines[3], '2027-03-20;17:45;spesa;Benessere;Osaka;pagato;;2500;JPY;2500;15,63;160,00;reale;');
   assert.equal(lines.length, 4);
   // stessa valuta: colonne distinte e cambio 1
   const same = { local: 'EUR', home: 'EUR', rate: 1 };

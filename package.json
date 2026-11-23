@@ -1,6 +1,6 @@
 {
   "name": "cassa-di-viaggio",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "PWA statica Cassa di viaggio. Nessuna dipendenza: i test usano solo Node e, per gli e2e, il Firefox già installato.",
   "private": true,
   "type": "module",

@@ -79,6 +79,36 @@ export function currencyOptions() {
     .sort((a, b) => a.name.localeCompare(b.name, 'it'));
 }
 
+const fold = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+// Ricerca nell'elenco statico per codice o nome ("usd", "dollaro", "yen", "dong"), senza rete.
+// Prima il codice esatto, poi i codici che iniziano così, poi i nomi che iniziano così, poi il resto.
+export function searchCurrencies(query) {
+  const q = fold(query);
+  const all = currencyOptions();
+  if (!q) return all;
+  const rank = (o) => {
+    const code = o.code.toLowerCase();
+    const name = fold(o.name);
+    if (code === q) return 0;
+    if (code.startsWith(q)) return 1;
+    if (name.startsWith(q) || name.split(/[\s-]+/).some((w) => w.startsWith(q))) return 2;
+    if (name.includes(q)) return 3;
+    return -1;
+  };
+  return all.map((o) => ({ o, r: rank(o) })).filter((x) => x.r >= 0).sort((a, b) => a.r - b.r).map((x) => x.o);
+}
+
+// Valute del viaggio: la locale, quella di riferimento (di casa) e le altre aggiunte dall'utente, senza doppioni.
+export function tripCurrencies(currencies, extra = []) {
+  if (!isValidCurrencies(currencies)) return [];
+  return [currencies.local, currencies.home, ...(Array.isArray(extra) ? extra : [])]
+    .filter((c, i, a) => isCurrency(c) && a.indexOf(c) === i);
+}
+
+// Una valuta «in più»: né la locale né quella di riferimento.
+export const isExtraCurrency = (code, fx) => code !== fx.local && code !== fx.home;
+
 function symbolOf(code, display) {
   try {
     const p = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, currencyDisplay: display })
@@ -92,18 +122,20 @@ function symbolOf(code, display) {
 // Simboli brevi delle due valute del viaggio. Se si confondono (dollaro e dollaro, yen e yuan) si usano
 // i simboli lunghi (US$, CA$) e, se non basta, i codici.
 export function currencySymbols(local, home) {
-  if (local === home) return { local: symbolOf(local, 'narrowSymbol'), home: symbolOf(home, 'narrowSymbol') };
-  let a = symbolOf(local, 'narrowSymbol');
-  let b = symbolOf(home, 'narrowSymbol');
-  if (a === b) {
-    a = symbolOf(local, 'symbol');
-    b = symbolOf(home, 'symbol');
+  const s = symbolsOf([local, home]);
+  return { local: s[local], home: s[home] };
+}
+
+// Simboli di tutte le valute del viaggio, con la stessa regola: solo quelle che si confondono passano al simbolo
+// lungo e poi al codice.
+export function symbolsOf(codes) {
+  const list = codes.filter((c, i, a) => a.indexOf(c) === i);
+  const out = Object.fromEntries(list.map((c) => [c, symbolOf(c, 'narrowSymbol')]));
+  for (const next of [(c) => symbolOf(c, 'symbol'), (c) => c]) {
+    const clash = list.filter((c) => list.some((d) => d !== c && out[d] === out[c]));
+    for (const c of clash) out[c] = next(c);
   }
-  if (a === b) {
-    a = local;
-    b = home;
-  }
-  return { local: a, home: b };
+  return out;
 }
 
 // Decimali della valuta (yen 0, euro 2, dinaro kuwaitiano 3).
@@ -115,11 +147,19 @@ export function currencyDigits(code) {
   }
 }
 
+// Importo arrotondato ai decimali della valuta (yen 0, euro 2, dinaro kuwaitiano 3).
+export function roundAmount(n, code) {
+  const p = 10 ** currencyDigits(code);
+  return Math.round(n * p) / p;
+}
+
 // ---- Cambio e conversioni ----
 
-// fx = { local, home, rate }: `rate` è quante unità della valuta locale vale 1 unità della valuta di casa.
-// Ogni spesa conserva importo, valuta e il tasso del momento: i totali dei giorni passati non cambiano
-// quando il tasso si aggiorna.
+// fx = { local, home, rate, extra, rates }: `rate` è quante unità della valuta locale vale 1 unità della valuta
+// di casa (la valuta di riferimento). Le altre valute del viaggio (`extra`) hanno ognuna il suo tasso in `rates`:
+// quante unità di quella valuta vale 1 unità della valuta di riferimento.
+// Ogni spesa conserva importo, valuta e il tasso del momento (`rate`, e `xrate` per le altre valute):
+// i totali dei giorni passati non cambiano quando il tasso si aggiorna.
 
 // Nessun tasso ancora: non si inventano conversioni finché non arriva un tasso vero o uno manuale.
 export const NO_RATE = { value: null, pair: null, date: null, source: 'nessuno' };
@@ -133,12 +173,43 @@ export function currentRate(currencies, r) {
   return r && r.value > 0 && r.pair === pairOf(currencies) ? r.value : null;
 }
 
-// Importo convertito nelle due valute. Senza tasso la conversione è NaN (si mostra «—»), mai un valore inventato.
-export function convert(amount, currency, rate, fx) {
+// Tasso attuale di un'altra valuta del viaggio: vale solo se è riferito alla valuta di riferimento di adesso.
+export function currentXRate(currencies, rates, code) {
+  if (!isValidCurrencies(currencies) || !isCurrency(code)) return null;
+  if (code === currencies.home) return 1;
+  const r = rates && rates[code];
+  return r && r.value > 0 && r.base === currencies.home ? r.value : null;
+}
+
+// Tassi attuali delle altre valute, per fx.rates.
+export function extraRates(currencies, extra, rates) {
+  const out = {};
+  for (const c of extra || []) out[c] = currentXRate(currencies, rates, c);
+  return out;
+}
+
+// Importo convertito nella valuta locale e in quella di riferimento. Senza tasso la conversione è NaN
+// (si mostra «—»), mai un valore inventato. `xrate` serve solo per le altre valute.
+export function convert(amount, currency, rate, fx, xrate) {
   const same = fx.local === fx.home;
   if (currency === fx.local) return { local: amount, home: same ? amount : rate > 0 ? amount / rate : NaN };
   if (currency === fx.home) return { local: rate > 0 ? amount * rate : NaN, home: amount };
-  return { local: NaN, home: NaN };
+  const home = xrate > 0 ? amount / xrate : NaN;
+  return { local: same ? home : rate > 0 ? home * rate : NaN, home };
+}
+
+// Righe in un'altra valuta registrate senza il suo tasso: ricevono il primo tasso scritto per quella valuta.
+export function fillMissingXRate(list, code, xrate) {
+  if (!(xrate > 0)) return 0;
+  let n = 0;
+  for (const e of list) {
+    if (e.currency !== code || e.paid === false) continue;
+    if (!(e.xrate > 0)) {
+      e.xrate = xrate;
+      n += 1;
+    }
+  }
+  return n;
 }
 
 // Spese (e voci già pagate) registrate quando non c'era ancora un tasso: ricevono il primo tasso vero.
@@ -158,7 +229,7 @@ export function fillMissingRate(list, rate) {
 }
 
 export function expenseValue(e, fx) {
-  return convert(e.amount, e.currency, e.rate, fx);
+  return convert(e.amount, e.currency, e.rate, fx, e.xrate);
 }
 
 // Voce del viaggio: se è pagata vale il tasso del pagamento, se è prevista quello di oggi.
@@ -166,8 +237,12 @@ function planRate(item, fx) {
   return item.paid && item.rate > 0 ? item.rate : fx.rate;
 }
 
+export function planXRate(item, fx) {
+  return item.paid && item.xrate > 0 ? item.xrate : fx.rates ? fx.rates[item.currency] : undefined;
+}
+
 export function planValue(item, fx) {
-  return convert(item.amount, item.currency, planRate(item, fx), fx);
+  return convert(item.amount, item.currency, planRate(item, fx), fx, planXRate(item, fx));
 }
 
 // ---- Tappe (le sceglie l'utente, anche nessuna) ----
@@ -268,42 +343,48 @@ export function newId() {
 const stageId = (s) => (typeof s === 'string' && s ? s : null);
 
 // `day` è il giorno della spesa (scelto, anche passato o futuro); `ts` resta il momento della registrazione.
-export function makeExpense({ amount, currency, category, stage = null, rate, day = null, now = new Date() }) {
-  if (!(amount > 0)) throw new Error('importo non valido');
+// `xrate` (tasso della sua valuta verso quella di riferimento) si passa solo per una spesa in un'altra valuta.
+export function makeExpense({ amount, currency, category, stage = null, rate, xrate, day = null, now = new Date() }) {
   if (!isCurrency(currency)) throw new Error('valuta non valida');
-  return {
+  const value = roundAmount(Number(amount), currency);
+  if (!(value > 0)) throw new Error('importo non valido');
+  const e = {
     id: newId(),
     ts: now.getTime(),
     day: isISODate(day) ? day : dayKey(now),
-    amount: round2(amount),
+    amount: value,
     currency,
     category: categoryById(category).id,
     stage: stageId(stage),
     rate: rate > 0 ? rate : null,
   };
+  if (xrate !== undefined) e.xrate = xrate > 0 ? xrate : null;
+  return e;
 }
 
-export function makePlanItem({ kind, label = '', stage = null, amount, currency, paid = false, rate, now = new Date() }) {
-  if (!(amount > 0)) throw new Error('importo non valido');
+export function makePlanItem({ kind, label = '', stage = null, amount, currency, paid = false, rate, xrate, now = new Date() }) {
   if (!isCurrency(currency)) throw new Error('valuta non valida');
   if (!planKindById(kind)) throw new Error('voce non valida');
-  return {
+  const value = roundAmount(Number(amount), currency);
+  if (!(value > 0)) throw new Error('importo non valido');
+  return setPlanPaid({
     id: newId(),
     ts: now.getTime(),
     kind,
     label: String(label).trim().slice(0, 80),
     stage: stageId(stage),
-    amount: round2(amount),
+    amount: value,
     currency,
-    paid: !!paid,
-    // il tasso si fissa al pagamento; una voce prevista usa il tasso del giorno
-    rate: paid && rate > 0 ? rate : null,
-  };
+  }, paid, rate, xrate);
 }
 
-// Segna una voce come pagata (fissa il tasso di oggi) o di nuovo prevista.
-export function setPlanPaid(item, paid, rate) {
-  return { ...item, paid: !!paid, rate: paid && rate > 0 ? rate : null };
+// Segna una voce come pagata (fissa il tasso di oggi) o di nuovo prevista: il tasso si fissa al pagamento,
+// una voce prevista usa il tasso del giorno. `xrate` solo per una voce in un'altra valuta (senza, il campo non c'è).
+export function setPlanPaid(item, paid, rate, xrate) {
+  const { xrate: _old, ...rest } = item;
+  const next = { ...rest, paid: !!paid, rate: paid && rate > 0 ? rate : null };
+  if (xrate !== undefined) next.xrate = paid && xrate > 0 ? xrate : null;
+  return next;
 }
 
 // ---- Tastierino ----
@@ -311,18 +392,19 @@ export function setPlanPaid(item, paid, rate) {
 const MAX_INT_DIGITS = 7;
 
 // Applica un tasto ("0"-"9", "00", ",", "back", "clear") alla stringa dell'importo.
-export function keypadInput(current, key) {
+// `digits` = decimali della valuta: con lo yen (0) la virgola non serve, con il dinaro kuwaitiano se ne scrivono 3.
+export function keypadInput(current, key, digits = 2) {
   let s = current || '';
   if (key === 'clear') return '';
   if (key === 'back') return s.slice(0, -1);
   if (key === ',') {
-    if (s.includes(',')) return s;
+    if (s.includes(',') || digits === 0) return s;
     return (s === '' ? '0' : s) + ',';
   }
   if (!/^\d+$/.test(key)) return s;
   const [intPart, decPart] = s.split(',');
   if (decPart !== undefined) {
-    const room = 2 - decPart.length;
+    const room = digits - decPart.length;
     return room > 0 ? s + key.slice(0, room) : s;
   }
   let next = intPart === '0' ? key : intPart + key;
@@ -331,19 +413,30 @@ export function keypadInput(current, key) {
   return next;
 }
 
-// Numero scritto a mano: "1.234,50", "1234,5", "1234.5". Nessun arrotondamento (serve anche per i tassi).
+// Numero scritto a mano: "1.234,50", "1234,5", "1234.5", "1.400" (punto delle migliaia, all'italiana: 1400).
+// Nessun arrotondamento (serve anche per i tassi).
 export function parseDecimal(s) {
   if (s === null || s === undefined) return 0;
   const str = String(s).trim().replace(/\s/g, '');
   if (!str) return 0;
   let norm = str;
   if (norm.includes(',')) norm = norm.replace(/\./g, '').replace(',', '.');
+  else if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(norm)) norm = norm.replace(/\./g, '');
   const n = Number(norm);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-export function parseAmount(s) {
-  return round2(parseDecimal(s));
+// Importo scritto: arrotondato ai decimali della valuta, se indicata (senza valuta a 2 decimali).
+export function parseAmount(s, currency) {
+  const n = parseDecimal(s);
+  return currency ? roundAmount(n, currency) : round2(n);
+}
+
+// Stringa del tastierino adattata ai decimali di un'altra valuta (es. "12,50" passando allo yen → "12").
+export function fitKeypad(s, digits) {
+  if (!s || !s.includes(',')) return s || '';
+  const [i, d] = s.split(',');
+  return digits === 0 ? i : `${i},${d.slice(0, digits)}`;
 }
 
 // ---- Importi rapidi ----
@@ -368,6 +461,7 @@ export const QUICK_FALLBACK = [5, 10, 20, 50, 100];
 // - senza budget ma con il cambio: a partire da circa mezza unità di casa (es. 1 € ≈ 160 ¥ → 100, 200, 500...);
 // - senza nessuna delle due informazioni: 5, 10, 20, 50, 100.
 export function quickAmounts(currency, fx, budget = null) {
+  if (isExtraCurrency(currency, fx)) return quickExtra(currency, fx, budget);
   const side = currency === fx.local ? 'local' : 'home';
   const factor = side === 'home' && fx.local !== fx.home ? 0.1 : 0.01;
   const b = budget && budget.amount > 0 ? convert(budget.amount, budget.currency, fx.rate, fx)[side] : NaN;
@@ -375,6 +469,17 @@ export function quickAmounts(currency, fx, budget = null) {
   if (Number.isFinite(b) && b > 0) anchor = b * factor;
   else if (side === 'local' && (fx.rate > 0 || fx.local === fx.home)) anchor = 0.5 * (fx.local === fx.home ? 1 : fx.rate);
   if (!(anchor > 0)) return [...QUICK_FALLBACK];
+  const i = niceIndex(anchor);
+  return SERIES.slice(i, i + 5);
+}
+
+// In un'altra valuta: come per la valuta locale (circa l'1% del budget, oppure mezza unità di riferimento),
+// con il tasso di quella valuta; senza tasso 5, 10, 20, 50, 100.
+function quickExtra(currency, fx, budget) {
+  const x = fx.rates ? fx.rates[currency] : null;
+  if (!(x > 0)) return [...QUICK_FALLBACK];
+  const b = budget && budget.amount > 0 ? convert(budget.amount, budget.currency, fx.rate, fx).home * x : NaN;
+  const anchor = Number.isFinite(b) && b > 0 ? b * 0.01 : 0.5 * x;
   const i = niceIndex(anchor);
   return SERIES.slice(i, i + 5);
 }
@@ -684,6 +789,7 @@ export function isFarFromRate(v, previous) {
 // si mostra senza decimali nei totali: è più leggibile e i centesimi non contano.
 export function wholeUnits(code, fx) {
   if (currencyDigits(code) === 0) return true;
+  if (isExtraCurrency(code, fx)) return fx.rates ? fx.rates[code] >= 10 : false;
   if (fx.local === fx.home || !(fx.rate > 0)) return false;
   if (code === fx.local) return fx.rate >= 10;
   if (code === fx.home) return fx.rate <= 0.1;
@@ -700,10 +806,11 @@ function numberFormat(min, max) {
 const withSymbol = (sym, s) => (/\p{L}$/u.test(sym) ? `${sym} ${s}` : sym + s);
 
 // Formattatori per le valute del viaggio: `local(n)` e `home(n)` per i totali, `money(importo, valuta)`
-// per un importo inserito (decimali solo se ci sono, nelle valute «piccole»).
+// per un importo inserito (decimali solo se ci sono, nelle valute «piccole»), anche nelle altre valute.
 export function makeFormat(fx) {
-  const sym = currencySymbols(fx.local, fx.home);
-  const symbolFor = (code) => (code === fx.local ? sym.local : code === fx.home ? sym.home : code);
+  const all = symbolsOf([fx.local, fx.home, ...(fx.extra || [])]);
+  const sym = { local: all[fx.local], home: all[fx.home] };
+  const symbolFor = (code) => all[code] || code;
   const digits = (code) => currencyDigits(code);
   const total = (n, code) => {
     if (!Number.isFinite(n)) return '—';
@@ -727,6 +834,8 @@ export function makeFormat(fx) {
     money,
     // "1 € = 160,00 ¥"
     rate: (value) => `1 ${sym.home} = ${formatRate(value)} ${sym.local}`,
+    // "1 € = 1,08 US$" (altra valuta)
+    xrate: (code, value) => `1 ${sym.home} = ${formatRate(value)} ${symbolFor(code)}`,
   };
 }
 
@@ -777,16 +886,28 @@ function csvCell(v) {
   return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// Controvalore con i decimali della valuta della colonna, come nel riepilogo (yen 0, euro 2, dinaro kuwaitiano 3).
 // Valori non calcolabili (riga senza tasso) restano vuoti nel CSV.
-const num2 = (n) => (Number.isFinite(n) ? n.toFixed(2).replace('.', ',') : '');
+const numValue = (n, code) => (Number.isFinite(n) ? n.toFixed(currencyDigits(code)).replace('.', ',') : '');
+// L'importo inserito con i decimali della sua valuta (yen 0, euro 2, dinaro kuwaitiano 3); un importo salvato con
+// i centesimi in una valuta senza decimali (dati di versioni vecchie) li tiene, per non cambiare il valore.
+const numAmount = (n, code) => {
+  if (!Number.isFinite(n)) return '';
+  const d = currencyDigits(code);
+  return n.toFixed(d < 2 && Math.round(n * 10 ** d) / 10 ** d !== n ? 2 : d).replace('.', ',');
+};
 const numRate = (n) => (Number.isFinite(n) && n > 0 ? String(n >= 1 ? n.toFixed(2) : Number(n.toPrecision(6))).replace('.', ',') : '');
 
 // Le colonne delle conversioni portano i codici delle valute del viaggio (es. importo_JPY, importo_EUR, JPY_per_EUR).
+// Con altre valute nel viaggio c'è un'ultima colonna in più (es. valuta_per_EUR): il tasso della valuta della riga
+// verso quella di riferimento. Senza altre valute le colonne restano quelle della v2.3.
+const hasExtra = (fx) => !!(fx.extra && fx.extra.length);
 export function csvHeader(fx) {
   const same = fx.local === fx.home;
   return [
     'data', 'ora', 'tipo', 'voce', 'tappa', 'stato', 'descrizione', 'importo', 'valuta',
     `importo_${fx.local}`, same ? `importo_${fx.home}_casa` : `importo_${fx.home}`, `${fx.local}_per_${fx.home}`, 'modalita', 'piano',
+    ...(hasExtra(fx) ? [`valuta_per_${fx.home}`] : []),
   ];
 }
 
@@ -810,6 +931,7 @@ export function toCSVAll(real, scenarios, fx) {
 // `set` = { expenses, plan, settings: { stages } }
 function csvRows(set, fx, mode, name) {
   const stages = (set.settings && set.settings.stages) || [];
+  const extraCell = (currency, xrate) => (!hasExtra(fx) ? [] : [isExtraCurrency(currency, fx) ? numRate(xrate) : '']);
   const stageCell = (id) => (stageById(stages, id) ? stageLabel(stages, id) : '');
   const time = (ts) => {
     const t = new Date(ts);
@@ -824,7 +946,8 @@ function csvRows(set, fx, mode, name) {
         cells: [
           e.day, dayKey(new Date(e.ts)) === e.day ? time(e.ts) : '', 'spesa', categoryById(e.category).label,
           stageCell(e.stage), 'pagato', '',
-          num2(e.amount), e.currency, num2(v.local), num2(v.home), numRate(fx.local === fx.home ? 1 : e.rate), mode, name,
+          numAmount(e.amount, e.currency), e.currency, numValue(v.local, fx.local), numValue(v.home, fx.home), numRate(fx.local === fx.home ? 1 : e.rate), mode, name,
+          ...extraCell(e.currency, e.xrate),
         ],
       };
     }),
@@ -836,7 +959,8 @@ function csvRows(set, fx, mode, name) {
         cells: [
           dayKey(new Date(p.ts)), time(p.ts), 'viaggio', (planKindById(p.kind) || { label: p.kind }).label,
           stageCell(p.stage), p.paid ? 'pagato' : 'previsto', p.label || '',
-          num2(p.amount), p.currency, num2(v.local), num2(v.home), numRate(fx.local === fx.home ? 1 : planRate(p, fx)), mode, name,
+          numAmount(p.amount, p.currency), p.currency, numValue(v.local, fx.local), numValue(v.home, fx.home), numRate(fx.local === fx.home ? 1 : planRate(p, fx)), mode, name,
+          ...extraCell(p.currency, planXRate(p, fx)),
         ],
       };
     }),
@@ -901,9 +1025,13 @@ export const cleanText = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().slic
 //             settings.stages (per il reale e per ogni piano); nome e destinazione del viaggio.
 // Fino alla v3 l'app aveva una sola coppia di valute (LEGACY_CURRENCIES) e tappe fisse: le tappe usate nei dati
 // diventano tappe dell'utente con lo stesso id, così nessuna spesa perde la sua tappa.
+// v5 (2.4.0): valute libere. Oltre alla valuta locale e a quella di riferimento (di casa) il viaggio può avere altre
+//             valute (settings.extraCurrencies), ognuna con il suo tasso verso la valuta di riferimento
+//             (settings.extraRates = { USD: { value, base, date, source, mode } }); una riga in un'altra valuta ha
+//             anche `xrate`. I dati della v2.2/v2.3 restano identici: si aggiungono solo i due campi vuoti.
 // La migrazione aggiunge e corregge: le righe illeggibili si contano (e restano nella copia di sicurezza che l'app
 // salva prima di migrare). Rieseguirla non cambia niente.
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const LEGACY_CURRENCIES = Object.freeze({ local: 'THB', home: 'EUR' }); // unica coppia delle versioni 1.x–2.1
 const LEGACY_RATE_FIELD = 'thbPerEur';
 
@@ -924,26 +1052,63 @@ function migrateRow(raw, now, seen, ctx, extra) {
   let id = typeof raw.id === 'string' && raw.id ? raw.id : newId();
   while (seen.has(id)) id += '-' + Math.random().toString(36).slice(2, 5);
   seen.add(id);
-  const { [LEGACY_RATE_FIELD]: legacyRate, ...rest } = raw;
+  const { [LEGACY_RATE_FIELD]: legacyRate, xrate: rawXRate, ...rest } = raw;
   const rate = toNum(ctx.legacy ? legacyRate ?? raw.rate : raw.rate);
-  return {
+  const currency = rowCurrency(raw.currency, ctx);
+  const row = {
     ...rest,
     id,
     ts,
-    amount: round2(amount),
-    currency: rowCurrency(raw.currency, ctx),
+    // i decimali salvati non si perdono: almeno 2 (come fino alla v2.3), 3 per le valute che ne hanno 3
+    amount: roundTo(amount, Math.max(2, currencyDigits(currency))),
+    currency,
     stage: ctx.stageIds.has(raw.stage) ? raw.stage : null,
     rate: rate > 0 ? rate : null,
     ...extra(raw, ts),
   };
+  // tasso della sua valuta: solo per le righe in un'altra valuta
+  if (ctx.currencies && isExtraCurrency(currency, ctx.currencies)) {
+    const x = toNum(rawXRate);
+    row.xrate = x > 0 ? x : null;
+  }
+  return row;
 }
 
-// Valuta di una riga: nei dati vecchi c'erano solo le due valute fisse; poi una delle due valute del viaggio.
+const roundTo = (n, d) => Math.round(n * 10 ** d) / 10 ** d;
+
+// Valuta di una riga: nei dati vecchi c'erano solo le due valute fisse; poi una delle valute del viaggio.
 function rowCurrency(c, ctx) {
   const { local, home } = ctx.currencies || LEGACY_CURRENCIES;
   if (ctx.legacy) return c === LEGACY_CURRENCIES.home ? LEGACY_CURRENCIES.home : LEGACY_CURRENCIES.local;
   if (c === local || c === home) return c;
   return isCurrency(c) ? c : local;
+}
+
+// Altre valute del viaggio (dalla v2.4): quelle salvate più quelle usate davvero da qualche riga (una riga
+// in una valuta che non è del viaggio non deve restare senza tasso modificabile).
+function migrateExtraCurrencies(s, currencies, sets) {
+  if (!currencies) return [];
+  const out = [];
+  const note = (c) => {
+    if (isCurrency(c) && isExtraCurrency(c, currencies) && !out.includes(c)) out.push(c);
+  };
+  for (const c of Array.isArray(s.extraCurrencies) ? s.extraCurrencies : []) note(c);
+  for (const [expenses, plan] of sets) {
+    for (const list of [expenses, plan]) for (const r of Array.isArray(list) ? list : []) if (isObj(r)) note(r.currency);
+  }
+  return out;
+}
+
+// Tassi delle altre valute: si tengono quelli validi, riferiti alla valuta di riferimento attuale.
+function migrateExtraRates(raw, currencies, extra) {
+  const out = {};
+  if (!isObj(raw) || !currencies) return out;
+  for (const c of extra) {
+    const r = raw[c];
+    const value = isObj(r) ? toNum(r.value) : NaN;
+    if (value > 0 && r.base === currencies.home) out[c] = { ...r, value };
+  }
+  return out;
 }
 
 // Spese e voci di un insieme di dati (il reale o un piano). Gli id sono unici dentro l'insieme.
@@ -981,7 +1146,7 @@ function migrateBudget(b, ctx) {
   else if (c && (b.currency === c.local || b.currency === c.home)) currency = b.currency;
   else if (c) currency = c.local;
   else return null;
-  return { amount: round2(amount), currency };
+  return { amount: roundTo(amount, Math.max(2, currencyDigits(currency))), currency };
 }
 
 // Tappe dell'utente (v4) già salvate: si tengono quelle leggibili, con id unici.
@@ -1043,7 +1208,11 @@ export function migrateData({ schema, expenses, settings, plan, scenarios } = {}
   const currencies = legacy
     ? { ...LEGACY_CURRENCIES }
     : isValidCurrencies(s.currencies) ? { local: s.currencies.local, home: s.currencies.home } : null;
-  const ctx = { legacy, currencies };
+  const extraCurrencies = legacy ? [] : migrateExtraCurrencies(s, currencies, [
+    [expenses, plan],
+    ...(Array.isArray(scenarios) ? scenarios : []).filter(isObj).map((x) => [x.expenses, x.plan]),
+  ]);
+  const ctx = { legacy, currencies: currencies && { ...currencies, extra: extraCurrencies } };
 
   // Tasso: nei dati vecchi era il tasso della coppia fissa; le prime versioni di prova salvavano un tasso
   // indicativo, che non è un tasso vero.
@@ -1056,11 +1225,13 @@ export function migrateData({ schema, expenses, settings, plan, scenarios } = {}
   }
 
   const real = migrateSet(expenses, plan, s, now, report, ctx, null);
-  const inputs = currencies ? [currencies.local, currencies.home] : [];
+  const inputs = currencies ? [currencies.local, currencies.home, ...extraCurrencies] : [];
   const outSettings = {
     ...real.settings,
     currencies,
     rate,
+    extraCurrencies,
+    extraRates: migrateExtraRates(s.extraRates, currencies, extraCurrencies),
     inputCurrency: legacy
       ? (s.inputCurrency === LEGACY_CURRENCIES.home ? LEGACY_CURRENCIES.home : LEGACY_CURRENCIES.local)
       : inputs.includes(s.inputCurrency) ? s.inputCurrency : currencies ? currencies.local : null,
@@ -1104,7 +1275,8 @@ export function formatKeypad(s) {
   return d === undefined ? grouped : grouped + ',' + d;
 }
 
-// Importo in forma modificabile per i campi di testo: 120 -> "120", 3.5 -> "3,50".
-export function amountToInput(n) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace('.', ',');
+// Importo in forma modificabile per i campi di testo: 120 -> "120", 3.5 -> "3,50", 1.235 KWD -> "1,235".
+// I decimali sono quelli con cui l'importo è salvato: almeno 2, 3 per le valute che ne hanno 3.
+export function amountToInput(n, code) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(Math.max(2, code ? currencyDigits(code) : 2)).replace('.', ',');
 }
